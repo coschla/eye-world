@@ -54,3 +54,8 @@ def read_gaze_data(file_path):
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
     return df
+
+
+
+def read_game_frames(file_path):
+    pass
