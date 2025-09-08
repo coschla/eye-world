@@ -1,14 +1,9 @@
-from pathlib import Path
-import webdataset
-import json
-import io
-from PIL import Image
-#from read import read_gaze_data
-#from utils import sort_files_by_timestamp
+# from read import read_gaze_data
+# from utils import sort_files_by_timestamp
 
 
 import webdataset as wds
-from PIL import Image
+
 
 def process_gaze_data(config_path, key_number):
     key_str = str(key_number)
@@ -25,8 +20,11 @@ def process_gaze_data(config_path, key_number):
 
     return [], []  # fallback if not found
 
+
 # Example usage
-images, coords = process_gaze_data("file:C:/Users/X570 MASTER/Desktop/redue/eye-world/dataset__pred_1.tar", 500)
+images, coords = process_gaze_data(
+    "file:C:/Users/X570 MASTER/Desktop/redue/eye-world/dataset__pred_1.tar", 500
+)
 print(coords)
 if images:
     images[0].show()  # Show the first image

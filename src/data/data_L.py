@@ -1,10 +1,7 @@
-import torch
-from torch.utils.data import DataLoader, Dataset
-
-# from torch import dataloader
 import os
 import tarfile
-import numpy
+
+from torch.utils.data import DataLoader
 
 # make into a function
 
@@ -14,6 +11,7 @@ def data_load_(folder, batch, config):
     val_data = []
     val_sub = config["validation_sub"]
     train_sub = config["train_sub"]
+
     for player in os.listdir(folder):
         player_path = folder + "/" + player
         for fname in os.listdir(player_path):
