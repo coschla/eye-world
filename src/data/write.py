@@ -1,13 +1,14 @@
 import bz2
-import os
+import tarfile
+from io import BytesIO
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 import webdataset
+from PIL import Image
 
 
-def read_bz2_file(file_path: Path) -> Optional[bytes]:
+def read_bz2_file(file_path: Path):
     """
     Reads a .bz2 compressed file and returns its decompressed content as bytes.
     """
@@ -19,6 +20,34 @@ def read_bz2_file(file_path: Path) -> Optional[bytes]:
     except Exception as e:
         print(f"An error occurred while reading '{file_path}': {e}")
     return None
+
+
+def extract_images_and_write_to_webdataset(
+    tar_bz2_file: Path, writer: webdataset.TarWriter
+) -> None:
+    """
+    Decompresses the .tar.bz2 file, extracts images, and writes them to a WebDataset tar file.
+    """
+    decompressed_data = read_bz2_file(tar_bz2_file)
+    if decompressed_data is None:
+        return
+
+    tar_bytes = BytesIO(decompressed_data)
+
+    try:
+        with tarfile.open(fileobj=tar_bytes, mode="r:") as tar:
+            for num, member in enumerate(tar.getmembers()):
+                if member.isfile():
+                    file_data = tar.extractfile(member).read()
+                    try:
+                        img = Image.open(BytesIO(file_data))
+                        # TODO: Add your webdataset logic here
+                        sample = None
+                        writer.write(sample)
+                    except Exception as e:
+                        print(f"Failed to open image {member.name}: {e}")
+    except Exception as e:
+        print(f"Error processing tar.bz2 file: {e}")
 
 
 def get_game_meta_data(game: str, config: dict) -> pd.DataFrame:
@@ -36,69 +65,41 @@ def get_game_meta_data(game: str, config: dict) -> pd.DataFrame:
     return game_meta_data
 
 
-def eye_gaze_to_webdataset(game: str, config: dict) -> None:
+def eye_gaze_to_webdataset(game: str, config: dict, output_file: Path) -> None:
     """
-    For each subject and trial in the specified game, reads the corresponding eye gaze data file.
+    For each subject and trial in the specified game, reads the corresponding eye gaze data file
+    and writes images to a WebDataset tar file.
     """
     raw_data_path = Path(config["raw_data_path"]) / game
     game_meta_data = get_game_meta_data(game, config)
 
-    for _, row in game_meta_data.iterrows():
-        subject_id = row["subject_id"]
-        trial_ids = row["trial_id"]
+    with webdataset.TarWriter(output_file) as writer:
+        for _, row in game_meta_data.iterrows():
+            subject_id = row["subject_id"]
+            trial_ids = row["trial_id"]
 
-        print(f"Reading data for subject: {subject_id}")
+            print(f"Reading data for subject: {subject_id}")
 
-        for run, trial_id in enumerate(trial_ids):
-            pattern = f"{trial_id}_{subject_id}*.txt"
-            matched_files = list(raw_data_path.glob(pattern))
+            for run, trial_id in enumerate(trial_ids):
+                pattern = f"{trial_id}_{subject_id}*.txt"
+                matched_files = list(raw_data_path.glob(pattern))
 
-            if not matched_files:
-                print(f"Warning: No files found for pattern '{pattern}'")
-                continue
+                if not matched_files:
+                    print(f"Warning: No files found for pattern '{pattern}'")
+                    continue
 
-            file_path = matched_files[0]
-            read_path = file_path.with_suffix("")  # remove '.txt'
+                file_path = matched_files[0]
+                read_path = file_path.with_suffix("")  # remove '.txt'
 
-            try:
-                eye_gaze = pd.read_csv(file_path, sep="\t")
-                print(eye_gaze)
-                print(f"Run {run} - Loaded {file_path.name}")
-                # Do something with eye_gaze here...
-            except Exception as e:
-                print(f"Failed to read {file_path}: {e}")
+                try:
+                    # NOTE: we have not used eye-data yet, we need to write it along with images.
+                    eye_gaze = pd.read_csv(file_path, sep="\t")
 
+                    # Write the game frames to .tar files
+                    tar_bz2_file = read_path.with_name(f"{read_path.name}.tar.bz2")
+                    extract_images_and_write_to_webdataset(
+                        tar_bz2_file, writer, f"{subject_id}_{trial_id}"
+                    )
 
-def write_eye_gaze_dataset(file_path, root_path):
-    for path in os.listdir(root_path):
-        path = root_path + "/" + path
-        coord = read_gaze_data(path)
-    print(coord)
-
-    # Method A: using .apply
-    df = coord["gaze_positions"]  # .apply(lambda coords: coords[0] if coords else None)
-    print(df)
-    img_dir = Path("src") / "data" / "game_frames" / "Class1"
-
-    for path in os.listdir(root_path):
-        print(path)
-        path = root_path + "/" + path
-        split_root = path.split("/")[-1]
-        name_part0 = split_root.split("_")[0]
-        name_part1 = split_root.split("_")[1]
-        name_part2 = split_root.split("_")[2]
-    prefix = name_part1 + "_" + name_part2
-    print(name_part1)
-    print(name_part2)
-    print(prefix)
-    file_name = name_part0 + "_" + prefix + "_pred.tar"
-    print(file_name)
-    with webdataset.TarWriter(file_name) as writer:
-        for num in range(len(os.listdir(file_path))):
-            name = prefix + "_" + str(num + 1) + ".png"
-
-            img_path = img_dir / name
-            img = img_path.read_bytes()
-            sample = {"__key__": str(num + 1), "png": img, "json": df[num]}
-
-            writer.write(sample)
+                except Exception as e:
+                    print(f"Failed to read {file_path}: {e}")
