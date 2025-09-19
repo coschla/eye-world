@@ -23,7 +23,7 @@ def read_bz2_file(file_path: Path):
 
 
 def extract_images_and_write_to_webdataset(
-    tar_bz2_file: Path, writer: webdataset.TarWriter
+    tar_bz2_file: Path, writer: webdataset.TarWriter, eye_gaze
 ) -> None:
     """
     Decompresses the .tar.bz2 file, extracts images, and writes them to a WebDataset tar file.
@@ -41,7 +41,7 @@ def extract_images_and_write_to_webdataset(
                     file_data = tar.extractfile(member).read()
                     try:
                         img = Image.open(BytesIO(file_data))
-                        # TODO: Add your webdataset logic here
+                        # TODO: Add your webdataset logic here. You should save the image and the eye-gaze info
                         sample = None
                         writer.write(sample)
                     except Exception as e:
@@ -98,7 +98,7 @@ def eye_gaze_to_webdataset(game: str, config: dict, output_file: Path) -> None:
                     # Write the game frames to .tar files
                     tar_bz2_file = read_path.with_name(f"{read_path.name}.tar.bz2")
                     extract_images_and_write_to_webdataset(
-                        tar_bz2_file, writer, f"{subject_id}_{trial_id}"
+                        tar_bz2_file, writer, f"{subject_id}_{trial_id}", eye_gaze
                     )
 
                 except Exception as e:
