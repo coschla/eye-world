@@ -41,8 +41,10 @@ def extract_images_and_write_to_webdataset(
                     file_data = tar.extractfile(member).read()
                     try:
                         img = Image.open(BytesIO(file_data))
+                        print(eye_gaze)
+                        sample = {"__key__": str(num), "image": img, "coords": eye_gaze}
                         # TODO: Add your webdataset logic here. You should save the image and the eye-gaze info
-                        sample = None
+                        # sample = None
                         writer.write(sample)
                     except Exception as e:
                         print(f"Failed to open image {member.name}: {e}")
@@ -65,13 +67,14 @@ def get_game_meta_data(game: str, config: dict) -> pd.DataFrame:
     return game_meta_data
 
 
-def eye_gaze_to_webdataset(game: str, config: dict, output_file: Path) -> None:
+def eye_gaze_to_webdataset(game: str, config: dict) -> None:
     """
     For each subject and trial in the specified game, reads the corresponding eye gaze data file
     and writes images to a WebDataset tar file.
     """
     raw_data_path = Path(config["raw_data_path"]) / game
     game_meta_data = get_game_meta_data(game, config)
+    output_file = Path(config["procesed_data_path"]) / game
 
     with webdataset.TarWriter(output_file) as writer:
         for _, row in game_meta_data.iterrows():
