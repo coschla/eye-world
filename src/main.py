@@ -1,6 +1,6 @@
 import yaml
 
-from data.write import eye_gaze_to_webdataset
+from data.data_write import eye_gaze_to_webdataset
 from utils import skip_run
 
 # The configuration file
