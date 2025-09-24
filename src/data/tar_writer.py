@@ -40,6 +40,7 @@ class WebDatasetWriter:
             del data[key]
         return data
 
+    # todo: ask about data writer and shard write
     def create_tar_file(self, file_name, write_path):
         # Check if file already exists, increment if so
         if self.cfg["data_writer"]["shard_write"]:

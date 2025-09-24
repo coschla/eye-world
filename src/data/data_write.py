@@ -60,10 +60,11 @@ def extract_images_and_write_to_webdataset(tar_bz2_file, writer, eye_gaze) -> No
                 file_data = tar.extractfile(member).read()
                 # TODO: THis code throws an error fix it.
                 img = Image.open(BytesIO(file_data))
+
                 sample = {
                     "__key__": str(num),
-                    "image": img,
-                    "coords": eye_gaze[num],
+                    "jpg": img,
+                    "json": eye_gaze[num - 1],
                 }
                 writer.write(sample)
 
