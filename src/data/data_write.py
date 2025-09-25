@@ -60,13 +60,15 @@ def extract_images_and_write_to_webdataset(tar_bz2_file, writer, eye_gaze) -> No
                 file_data = tar.extractfile(member).read()
                 # TODO: THis code throws an error fix it.
                 img = Image.open(BytesIO(file_data))
-
-                sample = {
-                    "__key__": str(num),
-                    "jpg": img,
-                    "json": eye_gaze[num - 1],
-                }
-                writer.write(sample)
+                try:
+                    sample = {
+                        "__key__": str(num),
+                        "jpg": img,
+                        "json": eye_gaze[num - 1],
+                    }
+                    writer.write(sample)
+                except ValueError:
+                    print("incorrect data format")
 
 
 def get_game_meta_data(game: str, config: dict) -> pd.DataFrame:
