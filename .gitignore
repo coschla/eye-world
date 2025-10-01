@@ -114,6 +114,5 @@ ENV/
 # Data folder
 data/*
 
-# Config
-configs/config.yaml
+
 

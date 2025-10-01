@@ -51,13 +51,16 @@ class WebDatasetWriter:
 
         # Create a folder
         write_path = get_nonexistant_path(path_to_file)
+        write_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Create a tar file
         if self.cfg["data_writer"]["shard_write"]:
             max_count = self.cfg["data_writer"]["shard_maxcount"]
-            self.sink = wds.ShardWriter(write_path, maxcount=max_count, compress=True)
+            self.sink = wds.ShardWriter(
+                str(write_path), maxcount=max_count, compress=True
+            )
         else:
-            self.sink = wds.TarWriter(write_path, compress=True)
+            self.sink = wds.TarWriter(str(write_path), compress=True)
 
     def write(self, data):
         if self.sink is None:

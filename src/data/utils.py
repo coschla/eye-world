@@ -14,7 +14,7 @@ def get_nonexistant_path(fname_path):
     """
     path = Path(fname_path)
     if not path.exists():
-        return str(path)
+        return path
 
     stem = path.stem
     suffix = path.suffix
@@ -26,7 +26,7 @@ def get_nonexistant_path(fname_path):
         i += 1
         new_path = parent / f"{stem}_{i}{suffix}"
 
-    return str(new_path)
+    return new_path
 
 
 def get_nonexistant_shard_path(fname_path_template):

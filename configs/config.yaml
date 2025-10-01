@@ -1,0 +1,20 @@
+# Paths
+raw_data_path: './data/raw/'
+meta_data_path: './data/raw/meta_data.csv'
+processed_data_path: './data/processed/'
+
+# Pytorch
+batch_size: 32
+num_workers: 4
+train_sub: []
+test_sub: []
+
+# Game data
+games: ['breakout']
+
+
+# Data writer parameters
+data_writer:
+  shard_write: False
+  shard_maxcount: 6250
+  data_write_freq: 3
