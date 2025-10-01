@@ -4,7 +4,6 @@ from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
-from PIL import Image
 
 from .tar_writer import WebDatasetWriter
 
@@ -53,18 +52,16 @@ def extract_images_and_write_to_webdataset(tar_bz2_file, writer, eye_gaze) -> No
 
     tar_bytes = BytesIO(decompressed_data)
 
-    # TODO: Check if the tar image files are of same length of eye gazes
     with tarfile.open(fileobj=tar_bytes, mode="r:") as tar:
         for num, member in enumerate(tar.getmembers()):
+            # NOTE: The first member of tar (num=0) file is the info. So the images start from num=1
             if member.isfile():
                 file_data = tar.extractfile(member).read()
-                # TODO: THis code throws an error fix it.
-                img = Image.open(BytesIO(file_data))
                 try:
                     sample = {
                         "__key__": str(num),
-                        "jpg": img,
-                        "json": eye_gaze[num - 1],
+                        "jpg": file_data,
+                        "json": eye_gaze[num - 1],  # img index starts from 1
                     }
                     writer.write(sample)
                 except ValueError:
@@ -125,3 +122,6 @@ def eye_gaze_to_webdataset(game: str, config: dict) -> None:
             extract_images_and_write_to_webdataset(
                 tar_bz2_file, webdataset_writer, eye_gaze
             )
+
+    # Close the webdataset writer gracefully
+    webdataset_writer.close()

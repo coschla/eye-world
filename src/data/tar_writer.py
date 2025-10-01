@@ -44,10 +44,10 @@ class WebDatasetWriter:
     def create_tar_file(self, file_name, write_path):
         # Check if file already exists, increment if so
         if self.cfg["data_writer"]["shard_write"]:
-            path_to_file = write_path + file_name + "_%06d.tar"
+            path_to_file = write_path + file_name + "_%06d.tar.gz"
             # shard_start_index = get_nonexistant_shard_path(path_to_file)
         else:
-            path_to_file = write_path + file_name + ".tar"
+            path_to_file = write_path + file_name + ".tar.gz"
 
         # Create a folder
         write_path = get_nonexistant_path(path_to_file)
