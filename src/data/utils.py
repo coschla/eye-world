@@ -1,32 +1,53 @@
-import re
-from datetime import datetime
 from pathlib import Path
 
 
-def sort_files_by_timestamp(directory):
+def get_nonexistant_path(fname_path):
     """
-    Sorts .txt files in the directory by the timestamp in their filename.
+    Get the path to a filename which does not exist by incrementing path.
 
-    Expected filename format:
-    e.g., 71_RZ_2901714_Aug-16-11-54-21.txt
-
-    Args:
-        directory (str or Path): Path to the directory containing the files.
-
-    Returns:
-        List[Path]: Sorted list of file paths by datetime.
+    Examples
+    --------
+    >>> get_nonexistant_path('/etc/issue')
+    '/etc/issue_1'
+    >>> get_nonexistant_path('whatever/1337bla.py')
+    'whatever/1337bla.py'
     """
-    directory = Path(directory)
-    txt_files = list(directory.glob("*.txt"))
+    path = Path(fname_path)
+    if not path.exists():
+        return str(path)
 
-    def extract_datetime(file_path):
-        match = re.search(r"_(\w{3}-\d{2}-\d{2}-\d{2}-\d{2})", file_path.stem)
-        if match:
-            try:
-                # Convert to datetime object
-                return datetime.strptime(match.group(1), "%b-%d-%H-%M-%S")
-            except ValueError:
-                pass
-        return datetime.min  # fallback to avoid crashing on bad format
+    stem = path.stem
+    suffix = path.suffix
+    parent = path.parent
 
-    return sorted(txt_files, key=extract_datetime)
+    i = 1
+    new_path = parent / f"{stem}_{i}{suffix}"
+    while new_path.exists():
+        i += 1
+        new_path = parent / f"{stem}_{i}{suffix}"
+
+    return str(new_path)
+
+
+def get_nonexistant_shard_path(fname_path_template):
+    """
+    Get the index for a shard path that does not exist by incrementing.
+
+    Assumes `fname_path_template` is a format string like: "shard_%d.txt"
+
+    Examples
+    --------
+    >>> get_nonexistant_shard_path('output_%d.txt')
+    0  # if output_0.txt does not exist
+    >>> get_nonexistant_shard_path('output_%d.txt')
+    5  # if output_0.txt to output_4.txt exist
+    """
+    path = Path(fname_path_template % 0)
+    if not path.is_file():
+        return 0
+
+    index = 1
+    while Path(fname_path_template % index).exists():
+        index += 1
+
+    return index
