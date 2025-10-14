@@ -1,18 +1,26 @@
+import webdataset as wds
 from torch.utils.data import DataLoader
+from torchvision import transforms
 
 from .utils import get_train_test_files
 
 
-def preprocessor(samples):
-    # TODO: Add pre-processing pipeline here and return processed  samples. You should return webdataset
+def preprocessor(samples, config):
     # NOTE: look up how to add custom pre-processing for webdataset
-
-    return NotImplementedError
+    transform1 = transforms.Compose(
+        [transforms.Resize((config["size_x"], config["size_y"]))]
+    )
+    if config["change_size"] is True:
+        samples = transform1(samples)
+    return samples
 
 
 def read_webdataset(file_list, config):
-    # TODO: Add logic to read web-dataset, it is very simple. Look up how to read webdataset
-    dataset = None
+    dataset = (
+        wds.WebDataset(file_list, shardshuffle=False)
+        .decode("pil")
+        .to_tuple("jpg'png", "json")
+    )
     return dataset
 
 
@@ -28,8 +36,8 @@ def create_dataloader(file_list, config, preprocessor=None):
     )
 
 
-def get_torch_dataloaders(config, preprocessor=None):
-    train_files, test_files = get_train_test_files(config)
+def get_torch_dataloaders(game, config, preprocessor=None):
+    train_files, test_files = get_train_test_files(game, config)
 
     return {
         "train": create_dataloader(train_files, config, preprocessor),

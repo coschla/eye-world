@@ -1,6 +1,7 @@
 import yaml
 
 from data.data_write import eye_gaze_to_webdataset
+from dataset.torch_dataset import get_torch_dataloaders
 from utils import skip_run
 
 # The configuration file
@@ -13,6 +14,6 @@ with skip_run("skip", "data_cleaning") as check, check():
         eye_gaze_to_webdataset(game, config)
 
 
-with skip_run("skip", "torch_dataset") as check, check():
-    # TODO: Call the get_torch_dataloaders function here
-    pass
+with skip_run("run", "torch_dataset") as check, check():
+    game = config["games"][0]
+    train, test = get_torch_dataloaders(game, config, preprocessor=None)
