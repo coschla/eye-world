@@ -1,3 +1,4 @@
+import torch
 from torchvision import transforms
 
 
@@ -11,10 +12,9 @@ class ResizePreprocessor:
         )
 
     def __call__(self, sample):
-        img, label = sample
+        img, eye_gazes = sample
         img = self.transform(img)
-        # TODO: Label is returned as a list. Return a tensor.
-        return img, label[-1]
+        return img, torch.tensor(eye_gazes[-1], dtype=torch.float)
 
 
 class ComposePreprocessor:
