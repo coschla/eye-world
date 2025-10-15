@@ -15,7 +15,7 @@ with skip_run("skip", "data_cleaning") as check, check():
         eye_gaze_to_webdataset(game, config)
 
 
-with skip_run("run", "torch_dataset") as check, check():
+with skip_run("skip", "torch_dataset") as check, check():
     game = config["games"][0]
     preprocessor = ComposePreprocessor([ResizePreprocessor(config)])
     train_test_dataloaders = get_torch_dataloaders(
@@ -25,3 +25,8 @@ with skip_run("run", "torch_dataset") as check, check():
     for x, y in train_test_dataloaders["train"]:
         print(x.shape)
         print(y.shape)
+
+
+with skip_run("skip", "gaze_prediction") as check, check():
+    game = config["games"][0]
+    # TODO: Add logic here to run the training of gaze prediction
