@@ -1,25 +1,14 @@
 import webdataset as wds
 from torch.utils.data import DataLoader
-from torchvision import transforms
 
 from .utils import get_train_test_files
-
-
-def preprocessor(samples, config):
-    # NOTE: look up how to add custom pre-processing for webdataset
-    transform1 = transforms.Compose(
-        [transforms.Resize((config["size_x"], config["size_y"]))]
-    )
-    if config["change_size"] is True:
-        samples = transform1(samples)
-    return samples
 
 
 def read_webdataset(file_list, config):
     dataset = (
         wds.WebDataset(file_list, shardshuffle=False)
         .decode("pil")
-        .to_tuple("jpg'png", "json")
+        .to_tuple("jpg", "json")
     )
     return dataset
 

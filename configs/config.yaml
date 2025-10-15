@@ -4,23 +4,22 @@ meta_data_path: './data/raw/meta_data.csv'
 processed_data_path: './data/processed/'
 
 # Pytorch
-batch_size: 32
-num_workers: 4
-train_sub: []
-test_sub: []
 
 # Game data
 games: ['breakout']
 
-#image size for transform
-change_size : 'False'
-size x : 100
-size y : 100
+# Dataset parameters
+batch_size: 32
+num_workers: 1
+
+# Data pre-processing
+size_x: 100
+size_y: 100
+train_sub: ['J']
+test_sub: ['K']
+
 # Data writer parameters
 data_writer:
   shard_write: False
   shard_maxcount: 6250
   data_write_freq: 3
-
-train_data_user : ['J']
-test_data_user : ['K']

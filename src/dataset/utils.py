@@ -20,21 +20,21 @@ def get_game_meta_data(game: str, config: dict) -> pd.DataFrame:
 
 def get_train_test_files(game, config):
     game_meta_data = get_game_meta_data(game, config)
-    train = []
-    test = []
+    train_files = []
+    test_files = []
     read_path = config["processed_data_path"] + f"{game}/"
+
     for _, row in game_meta_data.iterrows():
         subject_id = row["subject_id"]
         trial_ids = row["trial_id"]
         name = [
-            read_path + subject_id + "_" + str(trial_id) + ".tar"
+            read_path + subject_id + "_" + str(trial_id) + ".tar.gz"
             for trial_id in trial_ids
         ]
-        if subject_id in config["train_data_user"]:
-            # name = subject_id + "_" + trial_ids + ".tar"
-            train.append(name)
+        if subject_id in config["train_sub"]:
+            train_files.extend(name)
 
-        if subject_id in config["test_data_user"]:
-            test.append(name)
+        if subject_id in config["test_sub"]:
+            test_files.extend(name)
 
-    return train[0], test[0]
+    return train_files, test_files
