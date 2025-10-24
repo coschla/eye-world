@@ -6,15 +6,15 @@ processed_data_path: './data/processed/'
 # Pytorch
 
 # Game data
-games: ['breakout']
+games: ['ms_pacman']
 
 # Dataset parameters
 batch_size: 32
 num_workers: 1
 
 # Data pre-processing
-size_x: 100
-size_y: 100
+size_x: 160
+size_y: 210
 train_sub: ['J']
 test_sub: ['K']
 
