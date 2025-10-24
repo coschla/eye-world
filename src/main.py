@@ -45,12 +45,10 @@ with skip_run("run", "gaze_prediction") as check, check():
     train_test_dataloaders = get_torch_dataloaders(
         game, config, preprocessor=preprocessor
     )
-
     model = GazeTraining(config, net, train_test_dataloaders)
 
     # Trainer
     trainer = pl.Trainer(
-        # gpus=1,
         max_epochs=1,
         logger=logger,
         enable_progress_bar=True,

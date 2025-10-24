@@ -114,5 +114,7 @@ ENV/
 # Data folder
 data/*
 
+# Tensorboard Logs
+tb_logs/*
 
 

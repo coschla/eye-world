@@ -25,17 +25,17 @@ class ConvNet(nn.Module):
             nn.BatchNorm2d(1),
             nn.LeakyReLU(),
         )
+
         with torch.no_grad():
             x = torch.ones(1, 3, config["size_x"], config["size_y"])
             out = self.conv1(x)
             features = out.numel()
+
         self.lin1 = nn.Linear(features, 500)
         self.lin2 = nn.Linear(500, 100)
         self.lin3 = nn.Linear(100, 2)
 
         self.relu = nn.ReLU()
-
-    # TODO: Implement the network architecture here
 
     def forward(self, img):
         output = self.conv1(img)
@@ -44,4 +44,3 @@ class ConvNet(nn.Module):
         output = self.relu(self.lin2(output))
         output = self.lin3(output)
         return output
-        # TODO: Impelement the forward propogation

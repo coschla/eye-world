@@ -1,10 +1,9 @@
-import lightning as L
-import pytorch_lightning as L
+import pytorch_lightning as pl
 import torch
 from torch import nn
 
 
-class GazeTraining(L.LightningModule):
+class GazeTraining(pl.LightningModule):
     def __init__(self, hparams, net, data_loader):
         super().__init__()
         self.model = net
@@ -15,7 +14,6 @@ class GazeTraining(L.LightningModule):
         return self.model(x)
 
     def training_step(self, batch, batch_idx):
-        # TODO: 1. Add training logic and logging logic
         x, y = batch
         output = self.forward(x)
         loss = self.criterion(output, y)
@@ -23,7 +21,6 @@ class GazeTraining(L.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        # TODO: 1. Add training logic and logging logic
         x, y = batch
         output = self.forward(x)
         loss = self.criterion(output, y)
@@ -42,4 +39,3 @@ class GazeTraining(L.LightningModule):
             lr=1e-3,
         )
         return {"optimizer": optimizer}
-        # TODO: Add optimizer configuration
