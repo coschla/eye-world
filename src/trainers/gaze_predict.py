@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 import pytorch_lightning as pl
+=======
+import pytorch_lightning as L
+>>>>>>> dd199f7 (frame visulization created)
 import torch
 from torch import nn
 
@@ -38,4 +42,21 @@ class GazeTraining(pl.LightningModule):
             self.parameters(),
             lr=1e-3,
         )
+<<<<<<< HEAD
         return {"optimizer": optimizer}
+=======
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=0.5,
+            patience=4,
+        )
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "monitor": "test_data",  # required for this scheduler
+            },
+        }
+        # TODO: Add optimizer configuration
+>>>>>>> dd199f7 (frame visulization created)
