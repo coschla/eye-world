@@ -64,3 +64,6 @@ class ConvNet(nn.Module):
 
         output = self.lin1(output)
         return output
+
+
+# TODO: Add a convolution and de-convolution network architecture

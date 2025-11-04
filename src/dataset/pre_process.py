@@ -2,7 +2,7 @@ import torch
 from torchvision import transforms
 
 
-class ResizePreprocessor:
+class Resize:
     def __init__(self, config):
         if config.get("grey_scale", True):
             self.transform = transforms.Compose(
@@ -25,6 +25,20 @@ class ResizePreprocessor:
         img = self.transform(img)
 
         return img, torch.tensor(eye_gazes[-1], dtype=torch.float)
+
+
+class Stack:
+    def __init__(self, config):
+        # TODO: Add the logic to stack the images here
+        pass
+
+    def __call__(self, sample):
+        # TODO: Return a stack of images.
+        # Add a parameter of the config where we can set the stack length
+        input_stack = None
+        output_img = None
+
+        return input_stack, output_img
 
 
 class ComposePreprocessor:

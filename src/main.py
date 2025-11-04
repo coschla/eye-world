@@ -4,7 +4,7 @@ import yaml
 from lightning.pytorch.loggers import TensorBoardLogger
 
 from data.data_write import eye_gaze_to_webdataset
-from dataset.pre_process import ComposePreprocessor, ResizePreprocessor
+from dataset.pre_process import ComposePreprocessor, Resize, Stack
 from dataset.torch_dataset import get_torch_dataloaders
 from models.networks import ConvNet
 from trainers.gaze_predict import GazeTraining
@@ -22,7 +22,7 @@ with skip_run("skip", "data_cleaning") as check, check():
 
 with skip_run("skip", "torch_dataset") as check, check():
     game = config["games"][0]
-    preprocessor = ComposePreprocessor([ResizePreprocessor(config)])
+    preprocessor = ComposePreprocessor([Resize(config)])
     train_test_dataloaders = get_torch_dataloaders(
         game, config, preprocessor=preprocessor
     )
@@ -34,7 +34,7 @@ with skip_run("skip", "torch_dataset") as check, check():
 
 with skip_run("skip", "gaze_visualization") as check, check():
     game = config["games"][0]
-    preprocessor = ComposePreprocessor([ResizePreprocessor(config)])
+    preprocessor = ComposePreprocessor([Resize(config)])
     train_test_dataloaders = get_torch_dataloaders(
         game, config, preprocessor=preprocessor
     )
@@ -54,7 +54,7 @@ with skip_run("skip", "gaze_visualization") as check, check():
     plt.show()
 
 
-with skip_run("run", "gaze_prediction") as check, check():
+with skip_run("skip", "gaze_prediction") as check, check():
     game = config["games"][0]
     logger = TensorBoardLogger("tb_logs", name=f"{game}/gaze_prediction/")
     # gaze prediction network
@@ -63,7 +63,32 @@ with skip_run("run", "gaze_prediction") as check, check():
     )
 
     # Dataloader
-    preprocessor = ComposePreprocessor([ResizePreprocessor(config)])
+    preprocessor = ComposePreprocessor([Resize(config)])
+    train_test_dataloaders = get_torch_dataloaders(
+        game, config, preprocessor=preprocessor
+    )
+    model = GazeTraining(config, net, train_test_dataloaders)
+
+    # Trainer
+    trainer = pl.Trainer(
+        max_epochs=1,
+        logger=logger,
+        enable_progress_bar=True,
+    )
+    trainer.fit(model)
+
+
+with skip_run("skip", "gaze_prediction_conv_deconv") as check, check():
+    game = config["games"][0]
+    logger = TensorBoardLogger("tb_logs", name=f"{game}/gaze_prediction/")
+    # Gaze prediction network
+    # TODO: Replace this with the new conv -> deconv architecture
+    net = ConvNet(
+        config=config,
+    )
+
+    # Dataloader
+    preprocessor = ComposePreprocessor([Resize(config), Stack(config)])
     train_test_dataloaders = get_torch_dataloaders(
         game, config, preprocessor=preprocessor
     )
