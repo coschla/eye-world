@@ -4,16 +4,26 @@ from torchvision import transforms
 
 class ResizePreprocessor:
     def __init__(self, config):
-        self.transform = transforms.Compose(
-            [
-                transforms.Resize((config["size_x"], config["size_y"])),
-                transforms.ToTensor(),
-            ]
-        )
+        if config.get("grey_scale", True):
+            self.transform = transforms.Compose(
+                [
+                    transforms.Resize((config["size_x"], config["size_y"])),
+                    transforms.Grayscale(num_output_channels=1),
+                    transforms.ToTensor(),
+                ]
+            )
+        else:
+            self.transform = transforms.Compose(
+                [
+                    transforms.Resize((config["size_x"], config["size_y"])),
+                    transforms.ToTensor(),
+                ]
+            )
 
     def __call__(self, sample):
         img, eye_gazes = sample
         img = self.transform(img)
+
         return img, torch.tensor(eye_gazes[-1], dtype=torch.float)
 
 

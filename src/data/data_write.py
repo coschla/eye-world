@@ -1,4 +1,5 @@
 import bz2
+import re
 import tarfile
 from io import BytesIO
 from pathlib import Path
@@ -42,9 +43,19 @@ def read_gaze_data(file_path):
     return gaze_data
 
 
+def extract_frame_number(member):
+    """
+    Extract the trailing number from filenames like 'JAW_3117023_17135.png'.
+    Returns it as an int for proper numerical sorting.
+    """
+    match = re.search(r"_(\d+)\.png$", member.name)
+    return int(match.group(1)) if match else 0
+
+
 def extract_images_and_write_to_webdataset(tar_bz2_file, writer, eye_gaze) -> None:
     """
-    Decompresses the .tar.bz2 file, extracts images, and writes them to a WebDataset tar file.
+    Decompresses the .tar.bz2 file, extracts PNG images, and writes them to a WebDataset tar file.
+    Sorts files based on the numeric part of the filename (e.g., JAW_3117023_17135.png → 17135).
     """
     decompressed_data = read_bz2_file(tar_bz2_file)
     if decompressed_data is None:
@@ -53,19 +64,26 @@ def extract_images_and_write_to_webdataset(tar_bz2_file, writer, eye_gaze) -> No
     tar_bytes = BytesIO(decompressed_data)
 
     with tarfile.open(fileobj=tar_bytes, mode="r:") as tar:
-        for num, member in enumerate(tar.getmembers()):
-            # NOTE: The first member of tar (num=0) file is the info. So the images start from num=1
-            if member.isfile():
-                file_data = tar.extractfile(member).read()
-                try:
-                    sample = {
-                        "__key__": str(num),
-                        "jpg": file_data,
-                        "json": eye_gaze[num - 1],  # img index starts from 1
-                    }
-                    writer.write(sample)
-                except ValueError:
-                    print("incorrect data format")
+        members = sorted(
+            [
+                m
+                for m in tar.getmembers()
+                if m.isfile() and m.name.lower().endswith(".png")
+            ],
+            key=extract_frame_number,
+        )
+        # NOTE: The first member of tar (num=0) file is the info. So the images start from num=1
+        for idx, member in enumerate(members, start=1):
+            file_data = tar.extractfile(member).read()
+            try:
+                sample = {
+                    "__key__": str(idx - 1),
+                    "jpg": file_data,
+                    "json": eye_gaze[idx - 1],
+                }
+                writer.write(sample)
+            except (ValueError, IndexError):
+                print(f"Incorrect data format or mismatch for {member.name}")
 
 
 def get_game_meta_data(game: str, config: dict) -> pd.DataFrame:
