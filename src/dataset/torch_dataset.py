@@ -21,7 +21,10 @@ def create_dataloader(file_list, config, preprocessor=None):
         dataset = dataset.map(preprocessor)
 
     return DataLoader(
-        dataset, batch_size=config["batch_size"], num_workers=config["num_workers"]
+        dataset,
+        batch_size=config["batch_size"],
+        num_workers=config["num_workers"],
+        shuffle=config["shuffle"],
     )
 
 

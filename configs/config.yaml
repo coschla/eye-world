@@ -6,11 +6,12 @@ processed_data_path: './data/processed/'
 # Pytorch
 
 # Game data
-games: ['ms_pacman']
+games: ['breakout']
 
 # Dataset parameters
 batch_size: 32
 num_workers: 1
+shuffle: False
 
 # Data pre-processing
 size_x: 105

@@ -13,7 +13,7 @@ from utils import skip_run
 # The configuration file
 config_path = "configs/config.yaml"
 config = yaml.load(open(str(config_path)), Loader=yaml.SafeLoader)
-plt.ion()
+
 
 with skip_run("skip", "data_cleaning") as check, check():
     for game in config["games"]:
@@ -31,14 +31,14 @@ with skip_run("skip", "torch_dataset") as check, check():
         print(x.shape)
         print(y.shape)
 
-with skip_run("skip", "gaze_prediction") as check, check():
+
+with skip_run("skip", "gaze_visualization") as check, check():
     game = config["games"][0]
     preprocessor = ComposePreprocessor([ResizePreprocessor(config)])
     train_test_dataloaders = get_torch_dataloaders(
         game, config, preprocessor=preprocessor
     )
-    print(train_test_dataloaders)
-
+    plt.ion()
     fig, ax = plt.subplots()
     for batch_idx, (imgs, labels) in enumerate(train_test_dataloaders["train"]):
         for i in range(len(imgs)):
@@ -55,9 +55,8 @@ with skip_run("skip", "gaze_prediction") as check, check():
 
 
 with skip_run("run", "gaze_prediction") as check, check():
-    logger = TensorBoardLogger("tb_logs", name="test_light")
-
     game = config["games"][0]
+    logger = TensorBoardLogger("tb_logs", name=f"{game}/gaze_prediction/")
     # gaze prediction network
     net = ConvNet(
         config=config,
