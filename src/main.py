@@ -31,7 +31,7 @@ with skip_run("skip", "torch_dataset") as check, check():
         print(x.shape)
         print(y.shape)
 
-with skip_run("run", "gaze_prediction") as check, check():
+with skip_run("skip", "gaze_prediction") as check, check():
     game = config["games"][0]
     preprocessor = ComposePreprocessor([ResizePreprocessor(config)])
     train_test_dataloaders = get_torch_dataloaders(
@@ -54,7 +54,7 @@ with skip_run("run", "gaze_prediction") as check, check():
     plt.show()
 
 
-with skip_run("skip", "gaze_prediction") as check, check():
+with skip_run("run", "gaze_prediction") as check, check():
     logger = TensorBoardLogger("tb_logs", name="test_light")
 
     game = config["games"][0]

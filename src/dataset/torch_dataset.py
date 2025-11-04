@@ -27,7 +27,7 @@ def create_dataloader(file_list, config, preprocessor=None):
 
 def get_torch_dataloaders(game, config, preprocessor=None):
     train_files, test_files = get_train_test_files(game, config)
-
+    # the files are named in order but there in nothing that takes advange of that the files list are only the name of the test files
     return {
         "train": create_dataloader(train_files, config, preprocessor),
         "test": create_dataloader(test_files, config, preprocessor),
