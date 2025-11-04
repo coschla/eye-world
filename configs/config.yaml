@@ -10,12 +10,12 @@ games: ['breakout']
 
 # Dataset parameters
 batch_size: 32
-num_workers: 2
+num_workers: 1
 
 # Data pre-processing
 size_x: 80
 size_y: 105
-train_sub: ['R']
+train_sub: ['J']
 test_sub: ['K']
 grey_scale : True
 
