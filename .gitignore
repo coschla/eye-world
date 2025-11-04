@@ -117,4 +117,5 @@ data/*
 # Tensorboard Logs
 tb_logs/*
 
-
+#tensorboard logs
+tb_logs/*

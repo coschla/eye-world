@@ -48,7 +48,7 @@ with skip_run("skip", "gaze_prediction") as check, check():
 
             ax.imshow(img_np)
             ax.set_title(f"Frame {batch_idx},{i} Lable : {label}")
-            plt.pause(0.5)
+            plt.pause(0.1)
             ax.clear()
     plt.ioff
     plt.show()
@@ -72,12 +72,7 @@ with skip_run("run", "gaze_prediction") as check, check():
 
     # Trainer
     trainer = pl.Trainer(
-<<<<<<< HEAD
         max_epochs=1,
-=======
-        # gpus=1,
-        max_epochs=100,
->>>>>>> dd199f7 (frame visulization created)
         logger=logger,
         enable_progress_bar=True,
     )
