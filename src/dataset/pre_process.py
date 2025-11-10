@@ -1,3 +1,5 @@
+from collections import deque
+
 import torch
 from torchvision import transforms
 
@@ -30,15 +32,22 @@ class Resize:
 class Stack:
     def __init__(self, config):
         # TODO: Add the logic to stack the images here
-        pass
+        self.stack_len = config["stack_length"]
+        self.stack = deque(maxlen=self.stack_len)
 
     def __call__(self, sample):
+        img, eye_gazes = sample
         # TODO: Return a stack of images.
         # Add a parameter of the config where we can set the stack length
-        input_stack = None
-        output_img = None
 
-        return input_stack, output_img
+        if len(self.stack) < self.stack_len:
+            while len(self.stack) < self.stack_len:
+                self.stack.append(img)
+        else:
+            self.stack.append(img)
+        stacked = torch.cat(list(self.stack), dim=0)
+
+        return stacked, eye_gazes
 
 
 class ComposePreprocessor:
