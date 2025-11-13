@@ -3,6 +3,8 @@ from collections import deque
 import torch
 from torchvision import transforms
 
+from .eye_gaze_process import eye_gaze_to_density_image
+
 
 class Resize:
     def __init__(self, config):
@@ -26,7 +28,7 @@ class Resize:
         img, eye_gazes = sample
         img = self.transform(img)
 
-        return img, torch.tensor(eye_gazes[-1], dtype=torch.float)
+        return img, eye_gazes
 
 
 class Stack:
@@ -34,6 +36,7 @@ class Stack:
         # TODO: Add the logic to stack the images here
         self.stack_len = config["stack_length"]
         self.stack = deque(maxlen=self.stack_len)
+        self.config = config
 
     def __call__(self, sample):
         img, eye_gazes = sample
@@ -46,8 +49,10 @@ class Stack:
         else:
             self.stack.append(img)
         stacked = torch.cat(list(self.stack), dim=0)
+        # TODO: Create the density image here.
+        density_image = eye_gaze_to_density_image(img * 0, eye_gazes, self.config)
 
-        return stacked, eye_gazes
+        return stacked, density_image
 
 
 class ComposePreprocessor:

@@ -1,11 +1,10 @@
 import matplotlib.pyplot as plt
 import pytorch_lightning as pl
 import yaml
-from lightning.pytorch.loggers import TensorBoardLogger
-
 from data.data_write import eye_gaze_to_webdataset
 from dataset.pre_process import ComposePreprocessor, Resize, Stack
 from dataset.torch_dataset import get_torch_dataloaders
+from lightning.pytorch.loggers import TensorBoardLogger
 from models.networks import ConvNet, DeConvNet
 from trainers.gaze_predict import GazeTraining
 from utils import skip_run
@@ -58,9 +57,7 @@ with skip_run("skip", "gaze_prediction") as check, check():
     game = config["games"][0]
     logger = TensorBoardLogger("tb_logs", name=f"{game}/gaze_prediction/")
     # gaze prediction network
-    net = ConvNet(
-        config=config,
-    )
+    net = ConvNet(config=config)
 
     # Dataloader
     preprocessor = ComposePreprocessor([Resize(config)])
@@ -82,35 +79,7 @@ with skip_run("skip", "gaze_prediction_conv_deconv") as check, check():
     game = config["games"][0]
     logger = TensorBoardLogger("tb_logs", name=f"{game}/gaze_prediction/")
     # Gaze prediction network
-    # TODO: Replace this with the new conv -> deconv architecture
-    net = ConvNet(
-        config=config,
-    )
-
-    # Dataloader
-    preprocessor = ComposePreprocessor([Resize(config), Stack(config)])
-    train_test_dataloaders = get_torch_dataloaders(
-        game, config, preprocessor=preprocessor
-    )
-    model = GazeTraining(config, net, train_test_dataloaders)
-
-    # Trainer
-    trainer = pl.Trainer(
-        max_epochs=1,
-        logger=logger,
-        enable_progress_bar=True,
-    )
-    trainer.fit(model)
-
-
-with skip_run("run", "gaze_prediction_conv_deconv") as check, check():
-    game = config["games"][0]
-    logger = TensorBoardLogger("tb_logs", name=f"{game}/gaze_prediction/")
-    # Gaze prediction network
-    # TODO: Replace this with the new conv -> deconv architecture
-    net = DeConvNet(
-        config=config,
-    )
+    net = DeConvNet(config=config)
 
     # Dataloader
     preprocessor = ComposePreprocessor([Resize(config), Stack(config)])
