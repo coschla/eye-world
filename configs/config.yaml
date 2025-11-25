@@ -20,6 +20,7 @@ train_sub: ['J']
 test_sub: ['K']
 grey_scale : True
 stack_length : 4
+sigma: 5
 
 # Data writer parameters
 data_writer:

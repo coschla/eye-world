@@ -1,11 +1,12 @@
 import matplotlib.pyplot as plt
 import pytorch_lightning as pl
 import yaml
+from lightning.pytorch.loggers import TensorBoardLogger
+
 from data.data_write import eye_gaze_to_webdataset
 from dataset.pre_process import ComposePreprocessor, Resize, Stack
 from dataset.torch_dataset import get_torch_dataloaders
-from lightning.pytorch.loggers import TensorBoardLogger
-from models.networks import ConvNet, DeConvNet
+from models.networks import ConvDeconvNet, ConvNet
 from trainers.gaze_predict import GazeTraining
 from utils import skip_run
 
@@ -75,11 +76,11 @@ with skip_run("skip", "gaze_prediction") as check, check():
     trainer.fit(model)
 
 
-with skip_run("skip", "gaze_prediction_conv_deconv") as check, check():
+with skip_run("run", "gaze_prediction_conv_deconv") as check, check():
     game = config["games"][0]
     logger = TensorBoardLogger("tb_logs", name=f"{game}/gaze_prediction/")
     # Gaze prediction network
-    net = DeConvNet(config=config)
+    net = ConvDeconvNet(config=config)
 
     # Dataloader
     preprocessor = ComposePreprocessor([Resize(config), Stack(config)])
@@ -90,7 +91,7 @@ with skip_run("skip", "gaze_prediction_conv_deconv") as check, check():
 
     # Trainer
     trainer = pl.Trainer(
-        max_epochs=1,
+        max_epochs=10,
         logger=logger,
         enable_progress_bar=True,
     )

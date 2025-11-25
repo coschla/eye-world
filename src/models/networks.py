@@ -68,57 +68,49 @@ class ConvNet(nn.Module):
 
 
 # TODO: Add a convolution and de-convolution network architecture
-class DeConvNet(nn.Module):
+class ConvDeconvNet(nn.Module):
     def __init__(self, config):
-        super(DeConvNet, self).__init__()
-        self.conv1 = nn.Sequential(
-            # Block 1
-            nn.Conv2d(4, 32, kernel_size=8, stride=4, padding=4),
+        super(ConvDeconvNet, self).__init__()
+        self.config = config
+        # Encoder
+        self.encoder = nn.Sequential(
+            nn.Conv2d(
+                config["stack_length"], 32, kernel_size=8, stride=4, padding=4
+            ),  # 80x160 -> 21x41
             nn.BatchNorm2d(32),
             nn.LeakyReLU(),
-            nn.MaxPool2d(2),
-            # Block 2
-            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=1),
+            nn.MaxPool2d(2),  # 21x41 -> 10x20
+            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=1),  # 10x20 -> 5x10
             nn.BatchNorm2d(64),
             nn.LeakyReLU(),
-            nn.MaxPool2d(2),
-            # Block 3
-            nn.Conv2d(64, 64, kernel_size=3, padding=1),
+            nn.MaxPool2d(2),  # 5x10 -> 2x5
+            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1),  # 2x5 -> 2x5
             nn.BatchNorm2d(64),
             nn.LeakyReLU(),
-            # Block 4
-            nn.ConvTranspose2d(64, 64, kernel_size=3, padding=1),
+        )
+
+        # Decoder (pure transposed convolutions)
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose2d(64, 64, kernel_size=(3, 2), stride=(1, 2)),  # 3x2 -> 5x4
             nn.BatchNorm2d(64),
             nn.LeakyReLU(),
-            # Block 5
-            nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
+            nn.ConvTranspose2d(
+                64, 32, kernel_size=(3, 4), stride=(3, 2)
+            ),  # 5x4 -> 15x10
             nn.BatchNorm2d(32),
             nn.LeakyReLU(),
-            # Block 6 (final)
-            nn.ConvTranspose2d(32, 1, kernel_size=8, stride=4, padding=4),
-            nn.Sigmoid(),
-        )
-
-        with torch.no_grad():
-            self.eval()
-            if config.get("grey_scale", True):
-                x = torch.ones(1, 4, config["size_x"], config["size_y"])
-            else:
-                x = torch.ones(1, 12, config["size_x"], config["size_y"])
-
-            out = self.conv1(x)
-            features = out.view(1, -1).size(1)
-
-        self.lin1 = nn.Sequential(
-            nn.Linear(features, 500),
-            nn.Linear(500, 200),
+            nn.ConvTranspose2d(
+                32, 16, kernel_size=(7, 2), stride=(2, 2)
+            ),  # 15x10 -> 35x20
+            nn.BatchNorm2d(16),
             nn.LeakyReLU(),
-            nn.Linear(200, 2),
+            nn.ConvTranspose2d(
+                16, 1, kernel_size=(3, 4), stride=(3, 4)
+            ),  # 35x20 -> 105x80
+            nn.Softmax(),
         )
 
-    def forward(self, img):
-        output = self.conv1(img)
-        output = output.view(output.size(0), -1)
-
-        output = self.lin1(output)
-        return output
+    def forward(self, x):
+        x = self.encoder(x)
+        x = self.decoder(x)
+        return x

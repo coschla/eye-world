@@ -33,23 +33,18 @@ class Resize:
 
 class Stack:
     def __init__(self, config):
-        # TODO: Add the logic to stack the images here
         self.stack_len = config["stack_length"]
         self.stack = deque(maxlen=self.stack_len)
         self.config = config
 
     def __call__(self, sample):
         img, eye_gazes = sample
-        # TODO: Return a stack of images.
-        # Add a parameter of the config where we can set the stack length
-
         if len(self.stack) < self.stack_len:
             while len(self.stack) < self.stack_len:
                 self.stack.append(img)
         else:
             self.stack.append(img)
         stacked = torch.cat(list(self.stack), dim=0)
-        # TODO: Create the density image here.
         density_image = eye_gaze_to_density_image(img * 0, eye_gazes, self.config)
 
         return stacked, density_image
