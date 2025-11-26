@@ -3,7 +3,7 @@ import torch
 from scipy.ndimage import gaussian_filter
 
 
-def gaze_points_to_density(image_shape, gaze_points, sigma):
+def gaze_points_to_density(image_shape, gaze_points, sigma, config):
     """
     Convert gaze points to a smoothed density image using a Gaussian filter.
 
@@ -26,6 +26,8 @@ def gaze_points_to_density(image_shape, gaze_points, sigma):
         xs, ys = gaze_points[0], gaze_points[1]
 
     # Clip coordinates to valid indices
+    xs = xs * (W / config["original_size"][0])
+    ys = ys * (H / config["original_size"][1])
     xs = np.clip(xs, 0, W - 1).astype(int)
     ys = np.clip(ys, 0, H - 1).astype(int)
 
@@ -41,7 +43,7 @@ def gaze_points_to_density(image_shape, gaze_points, sigma):
     return density
 
 
-def eye_gaze_to_density_image(empty_image, gaze_locations, config):
+def eye_gaze_to_density_image(image_shape, gaze_locations, config):
     """
     Convert eye gaze points to a density image using Gaussian smoothing.
 
@@ -56,12 +58,9 @@ def eye_gaze_to_density_image(empty_image, gaze_locations, config):
     sigma = config["sigma"]
 
     # Use last gaze sequence
-    density = gaze_points_to_density(empty_image.shape, gaze_locations[-1], sigma)
+    density = gaze_points_to_density(image_shape, gaze_locations[-1], sigma, config)
 
-    if isinstance(empty_image, torch.Tensor):
-        density = torch.from_numpy(density).to(
-            empty_image.device, dtype=empty_image.dtype
-        )
-        density = density.unsqueeze(0)
+    density = torch.from_numpy(density)
+    density = density.unsqueeze(0)
 
     return density

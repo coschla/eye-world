@@ -14,6 +14,9 @@ class Resize:
                     transforms.Resize((config["size_x"], config["size_y"])),
                     transforms.Grayscale(num_output_channels=1),
                     transforms.ToTensor(),
+                    transforms.Lambda(
+                        lambda x: (x - torch.min(x)) / (torch.max(x) - torch.min(x))
+                    ),
                 ]
             )
         else:
@@ -21,6 +24,9 @@ class Resize:
                 [
                     transforms.Resize((config["size_x"], config["size_y"])),
                     transforms.ToTensor(),
+                    transforms.Lambda(
+                        lambda x: (x - torch.min(x)) / (torch.max(x) - torch.min(x))
+                    ),
                 ]
             )
 
@@ -45,7 +51,7 @@ class Stack:
         else:
             self.stack.append(img)
         stacked = torch.cat(list(self.stack), dim=0)
-        density_image = eye_gaze_to_density_image(img * 0, eye_gazes, self.config)
+        density_image = eye_gaze_to_density_image(img.shape, eye_gazes, self.config)
 
         return stacked, density_image
 
