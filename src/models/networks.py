@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 
+from .utils import flatten_softmax_reshape
+
 
 class ConvNet(nn.Module):
     def __init__(self, config):
@@ -114,3 +116,76 @@ class ConvDeconvNet(nn.Module):
         x = self.encoder(x)
         x = self.decoder(x)
         return x
+
+
+class UNet(nn.Module):
+    def __init__(self, config):
+        super(UNet, self).__init__()
+        self.config = config
+        in_channels = config["stack_length"]
+
+        # --- Encoder ---
+        self.enc1 = nn.Sequential(
+            nn.Conv2d(in_channels, 32, kernel_size=8, stride=4),
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(),
+        )
+
+        self.enc2 = nn.Sequential(
+            nn.Conv2d(32, 64, kernel_size=4, stride=2),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(),
+        )
+
+        self.enc3 = nn.Sequential(
+            nn.Conv2d(64, 64, kernel_size=3, stride=1),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(),
+        )
+
+        self.bottleneck = nn.Sequential(
+            nn.Conv2d(64, 64, kernel_size=3, stride=1),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(),
+        )
+
+        # --- Decoder ---
+        self.dec3 = nn.Sequential(
+            nn.ConvTranspose2d(64, 32, kernel_size=3, stride=1),
+            nn.LeakyReLU(),
+        )
+
+        self.dec2 = nn.Sequential(
+            nn.ConvTranspose2d(96, 32, kernel_size=3, stride=1),
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(),
+        )
+
+        self.dec1 = nn.Sequential(
+            nn.ConvTranspose2d(96, 64, kernel_size=4, stride=2),
+            nn.LeakyReLU(),
+        )
+
+        self.dec0 = nn.Sequential(
+            nn.ConvTranspose2d(64, 1, kernel_size=8, stride=4),
+            nn.LeakyReLU(),
+        )
+
+    def forward(self, x):
+        # Encoder
+        e1 = self.enc1(x)
+        e2 = self.enc2(e1)
+        e3 = self.enc3(e2)
+
+        b = self.bottleneck(e3)
+
+        # Decoder with skip connections
+        d3 = self.dec3(b)
+        d3 = torch.cat([d3, e3], dim=1)  # skip connection
+
+        d2 = self.dec2(d3)
+        d2 = torch.cat([d2, e2], dim=1)  # skip connection
+
+        d1 = self.dec1(d2)
+        out = self.dec0(d1)
+        return flatten_softmax_reshape(out)

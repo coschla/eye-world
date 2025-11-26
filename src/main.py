@@ -6,7 +6,7 @@ from lightning.pytorch.loggers import TensorBoardLogger
 from data.data_write import eye_gaze_to_webdataset
 from dataset.pre_process import ComposePreprocessor, Resize, Stack
 from dataset.torch_dataset import get_torch_dataloaders
-from models.networks import ConvDeconvNet, ConvNet
+from models.networks import ConvNet, UNet
 from trainers.gaze_predict import GazeTraining
 from utils import skip_run
 
@@ -80,7 +80,7 @@ with skip_run("run", "gaze_prediction_conv_deconv") as check, check():
     game = config["games"][0]
     logger = TensorBoardLogger("tb_logs", name=f"{game}/gaze_prediction/")
     # Gaze prediction network
-    net = ConvDeconvNet(config=config)
+    net = UNet(config=config)
 
     # Dataloader
     preprocessor = ComposePreprocessor([Resize(config), Stack(config)])
