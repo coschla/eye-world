@@ -128,47 +128,47 @@ class UNet(nn.Module):
         self.enc1 = nn.Sequential(
             nn.Conv2d(in_channels, 32, kernel_size=8, stride=4),
             nn.BatchNorm2d(32),
-            nn.LeakyReLU(),
+            nn.ReLU(),
         )
 
         self.enc2 = nn.Sequential(
             nn.Conv2d(32, 64, kernel_size=4, stride=2),
             nn.BatchNorm2d(64),
-            nn.LeakyReLU(),
+            nn.ReLU(),
         )
 
         self.enc3 = nn.Sequential(
             nn.Conv2d(64, 64, kernel_size=3, stride=1),
             nn.BatchNorm2d(64),
-            nn.LeakyReLU(),
+            nn.ReLU(),
         )
 
         self.bottleneck = nn.Sequential(
             nn.Conv2d(64, 64, kernel_size=3, stride=1),
             nn.BatchNorm2d(64),
-            nn.LeakyReLU(),
+            nn.ReLU(),
         )
 
         # --- Decoder ---
         self.dec3 = nn.Sequential(
             nn.ConvTranspose2d(64, 32, kernel_size=3, stride=1),
-            nn.LeakyReLU(),
+            nn.ReLU(),
         )
 
         self.dec2 = nn.Sequential(
             nn.ConvTranspose2d(96, 32, kernel_size=3, stride=1),
             nn.BatchNorm2d(32),
-            nn.LeakyReLU(),
+            nn.ReLU(),
         )
 
         self.dec1 = nn.Sequential(
             nn.ConvTranspose2d(96, 64, kernel_size=4, stride=2),
-            nn.LeakyReLU(),
+            nn.ReLU(),
         )
 
         self.dec0 = nn.Sequential(
             nn.ConvTranspose2d(64, 1, kernel_size=8, stride=4),
-            nn.LeakyReLU(),
+            nn.ReLU(),
         )
 
     def forward(self, x):
@@ -177,6 +177,7 @@ class UNet(nn.Module):
         e2 = self.enc2(e1)
         e3 = self.enc3(e2)
 
+        # Bottleneck
         b = self.bottleneck(e3)
 
         # Decoder with skip connections

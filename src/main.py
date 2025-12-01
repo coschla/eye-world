@@ -91,8 +91,10 @@ with skip_run("run", "gaze_prediction_conv_deconv") as check, check():
 
     # Trainer
     trainer = pl.Trainer(
-        max_epochs=10,
+        max_epochs=config["epochs"],
         logger=logger,
+        devices=[0],
+        accelerator="gpu",
         enable_progress_bar=True,
     )
     trainer.fit(model)

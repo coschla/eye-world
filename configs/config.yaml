@@ -4,7 +4,7 @@ meta_data_path: './data/raw/meta_data.csv'
 processed_data_path: './data/processed/'
 
 # Pytorch
-
+epochs: 50
 # Game data
 games: ['breakout']
 
@@ -17,10 +17,10 @@ shuffle: False
 original_size: [210, 160]
 size_x: 84
 size_y: 84
-train_sub: ['J']
+train_sub: ['R']
 test_sub: ['K']
 grey_scale : True
-stack_length : 4
+stack_length : 3
 sigma: 5
 
 # Data writer parameters
