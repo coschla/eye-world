@@ -4,21 +4,24 @@ meta_data_path: './data/raw/meta_data.csv'
 processed_data_path: './data/processed/'
 
 # Pytorch
-
+epochs: 50
 # Game data
-games: ['ms_pacman']
+games: ['breakout']
 
 # Dataset parameters
 batch_size: 32
-num_workers: 1
+num_workers: 3
 shuffle: False
 
 # Data pre-processing
-size_x: 105
-size_y: 80
-train_sub: ['J']
+original_size: [210, 160]
+size_x: 84
+size_y: 84
+train_sub: ['R']
 test_sub: ['K']
 grey_scale : True
+stack_length : 3
+sigma: 5
 
 # Data writer parameters
 data_writer:
