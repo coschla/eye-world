@@ -22,6 +22,7 @@ from models.vjepa import (
 from trainers.action_predict import ActionTraining
 from trainers.gaze_predict import GazeTraining
 from trainers.jepa import VJEPA, ActionConditionVJEPA
+from trainers.utils import atari_to_gym
 from utils import skip_run
 
 # The configuration file
@@ -116,7 +117,7 @@ with skip_run("skip", "gaze_prediction_conv_deconv") as check, check():
     trainer.fit(model)
 
 
-with skip_run("skip", "jepa_training") as check, check():
+with skip_run("run", "jepa_training") as check, check():
     game = config["games"][0]
     logger = TensorBoardLogger("tb_logs", name=f"{game}/vjepa_world_model/")
 
@@ -308,7 +309,7 @@ with skip_run("skip", "jepa_training_multi_game") as check, check():
     trainer.fit(model, train_loader)
 
 
-with skip_run("skip", "jepa_trainers") as check, check():
+with skip_run("flase", "jepa_trainers") as check, check():
     game = config["games"][0]
     logger = TensorBoardLogger("tb_logs", name=f"{game}/vjepa_action_world_model/")
 
@@ -948,7 +949,7 @@ with skip_run("skip", "jepa_rollout_trainer_with_validation") as check, check():
         # -----------------------------
         def predict_next(self, latent, action):
             with torch.no_grad():
-                a = self.action_embed(action)
+                a = self.action_embed(atari_to_gym(action))
 
                 if a.ndim > 2:
                     a = a.mean(dim=tuple(range(1, a.ndim - 1)))
