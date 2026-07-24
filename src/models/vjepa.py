@@ -2,7 +2,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from kornia.contrib import compute_padding, extract_tensor_patches
 
-from models.utils import get_3d_sincos_pos_embed
+# from models.utils import get_3d_sincos_pos_embed
+from .utils import get_3d_sincos_pos_embed
 
 DEBUG = False  # set True for debugging
 
@@ -49,6 +50,7 @@ class TubeletEmbedding(nn.Module):
         self.num_patches = self.grid_h * self.grid_w * self.grid_depth
 
         tubelet_input_dim = patch_dim * self.patchx * self.patchy * self.tubelet_size
+
         self.proj = nn.Linear(tubelet_input_dim, embed_dim)
 
         pos_embed = get_3d_sincos_pos_embed(
@@ -61,6 +63,12 @@ class TubeletEmbedding(nn.Module):
         video: [B, T, C, H, W]
         returns: [B, num_patches, embed_dim]
         """
+
+        # print(f"patch_dim=  {self.patch_dim}")
+        # print(f"self.patchx= {self.patchx}")
+        # print(f"self.patchy= {self.patchy}")
+        # print(f"self.tubelet_size =   {self.tubelet_size}")
+
         B, T, C, H, W = video.shape
         # assert T == self.stack_size, f"Expected T={self.stack_size}, got {T}"
 

@@ -1,6 +1,8 @@
 from collections import deque
 
+import numpy as np
 import torch
+from PIL import Image
 from torchvision import transforms
 
 from .eye_gaze_process import eye_gaze_to_density_image
@@ -32,9 +34,29 @@ class Resize:
 
     def __call__(self, sample):
         img, eye_gazes, action = sample
+
+        # ✅ Handle different input types safely
+        if isinstance(img, np.ndarray):
+            img = Image.fromarray(img)  # numpy → PIL
+
+        elif isinstance(img, torch.Tensor):
+            # If it's already a tensor, make sure shape is (C, H, W)
+            if img.ndim == 3 and img.shape[0] not in [1, 3]:
+                # likely (H, W, C) → convert
+                img = img.permute(2, 0, 1)
+
+        # PIL images pass through untouched
+
         img = self.transform(img)
 
         return img, eye_gazes, action
+
+
+"""    def __call__(self, sample):
+        img, eye_gazes, action = sample
+        img = self.transform(img)
+
+        return img, eye_gazes, action"""
 
 
 class Stack:
