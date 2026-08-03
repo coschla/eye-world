@@ -1,10 +1,22 @@
+import pytorch_lightning as pl
 import torch
-import torch.nn as nn
+import yaml
+from lightning.pytorch.loggers import TensorBoardLogger
+from pytorch_lightning.strategies import DDPStrategy
+from torch import nn
+
+from dataset.pre_process import ComposePreprocessor, Resize, StackWithLabels
+from dataset.torch_dataset import get_torch_dataloaders
+from utils import skip_run
+
+# The configuration file
+config_path = "configs/config.yaml"
+config = yaml.load(open(str(config_path)), Loader=yaml.SafeLoader)
 
 
 class ActionNet(nn.Module):
     def __init__(self, num_actions):
-        super(ActionNet, self).__init__()
+        super().__init__()
 
         # Convolutional feature extractor
         self.conv_layers = nn.Sequential(
