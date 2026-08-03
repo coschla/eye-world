@@ -2,9 +2,9 @@ import copy
 
 import pytorch_lightning as pl
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 import yaml
+from torch import nn
 
 from models.utils import atari_to_gym, block_mask_tubelets_vectorized
 from trainers.utils import format_batch_for_vjepa
@@ -188,7 +188,7 @@ class ActionConditionVJEPA(pl.LightningModule):
             dim_feedforward=2048,
             batch_first=True,
         )
-        """
+
         ckpt_path = config["ckpt_path"]
         try:
             ckpt = torch.load(ckpt_path, map_location="cpu")
@@ -209,7 +209,7 @@ class ActionConditionVJEPA(pl.LightningModule):
             }
             self.model.tubelet_embed.load_state_dict(embed_weights)
         except FileNotFoundError:
-            pass"""
+            pass
 
         # Teacher starts as EMA of student
         self.teacher.load_state_dict(self.model.student.state_dict())

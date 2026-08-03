@@ -6,12 +6,11 @@ from pathlib import Path
 import gymnasium as gym
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 import yaml
+from torch import nn
 from torch.utils.tensorboard import SummaryWriter
 
-from Eval.gym_eval import GymManager
 from models.vjepa import (
     ActionEmbedding,
     TransformerEncoder,
@@ -267,8 +266,7 @@ def clean_checkpoint_state_dict(state_dict):
         if key.startswith("teacher."):
             continue
 
-        if key.startswith("module."):
-            key = key[len("module.") :]
+        key = key.removeprefix("module.")
 
         cleaned[key] = value
 
@@ -778,6 +776,11 @@ def train_online_score_delta(
         lr=lr,
         weight_decay=weight_decay,
     )
+    scheduler = torch.optim.lr_scheduler.StepLR(
+        optimizer,
+        step_size=25_000,
+        gamma=0.95,
+    )
 
     envs = [GymManager(config, env_name=env_name) for _ in range(num_envs)]
 
@@ -870,6 +873,10 @@ def train_online_score_delta(
                     current_score=batch_scores,
                 )
 
+                predicted_delta_normalized = predicted_delta_normalized.squeeze(-1)
+
+            ####################################################################################################
+            # #################################################################################################
             # ------------------------------------------------
             # Execute the same actions in the real environment
             # to get the true score delta.
@@ -940,7 +947,12 @@ def train_online_score_delta(
             )
 
             target_delta_normalized = actual_delta / model.score_delta_norm
-
+            if predicted_delta_normalized.shape != target_delta_normalized.shape:
+                raise RuntimeError(
+                    "Prediction and target shapes do not match: "
+                    f"prediction={predicted_delta_normalized.shape}, "
+                    f"target={target_delta_normalized.shape}"
+                )
             valid_mask = torch.tensor(
                 valid_mask,
                 device=device,
@@ -979,6 +991,7 @@ def train_online_score_delta(
                         )
 
                     optimizer.step()
+                scheduler.step()
 
                 predicted_delta = (
                     predicted_delta_normalized.detach() * model.score_delta_norm
@@ -1001,7 +1014,17 @@ def train_online_score_delta(
                 valid_fraction = 0.0
 
             global_step += 1
-
+            if global_step % 1000 == 0:
+                print(
+                    "prediction shape:",
+                    predicted_delta_normalized.shape,
+                    "target shape:",
+                    target_delta_normalized.shape,
+                    "prediction std:",
+                    predicted_delta_normalized.std().item(),
+                    "target std:",
+                    target_delta_normalized.std().item(),
+                )
             running_loss += loss_value
             running_abs_error += abs_error_value
             running_pred_delta += pred_value
@@ -1145,7 +1168,7 @@ def train_online_score_delta(
 # Main Online Score-Delta Training Block
 # ============================================================
 
-with skip_run("skip", "online_jepa_score_delta_trainer") as check, check():
+with skip_run("run", "online_jepa_score_delta_trainer") as check, check():
     game = config["games"][0]
 
     env_name = config.get("env_name", "ALE/MsPacman-v5")
@@ -1220,12 +1243,13 @@ with skip_run("skip", "online_jepa_score_delta_trainer") as check, check():
     # --------------------------------------------------------
     # Load pretrained JEPA checkpoint
     # --------------------------------------------------------
-
+    """
     pretrained_checkpoint = config.get(
         "pretrained_jepa_checkpoint",
         "/home/cody/Documents/IHL/eye-world/tb_logs/ms_pacman/vjepa_action_world_model/version_4/checkpoints/epoch=49-step=164350.ckpt",
     )
-
+    """
+    pretrained_checkpoint = "tb_logs/ms_pacman/vjepa_rollout_world_model/version_2/checkpoints/epoch=49-step=164350.ckpt"
     load_matching_weights(
         model=model,
         checkpoint_path=pretrained_checkpoint,
@@ -1480,7 +1504,7 @@ class CEMActionPlanner:
             dim=0,
         )
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def plan(
         self,
         model,
@@ -1739,12 +1763,12 @@ def build_score_delta_model_for_planning(config, device):
         config=config,
         embed_dim=embed_dim,
     )
-
-    pretrained_checkpoint = config.get(
-        "pretrained_jepa_checkpoint",
-        "/home/cody/Documents/IHL/eye-world/tb_logs/ms_pacman/vjepa_action_world_model/version_4/checkpoints/epoch=49-step=164350.ckpt",
-    )
-
+    pretrained_checkpoint = "/home/cody/Documents/IHL/eye-world/tb_logs/ms_pacman/vjepa_rollout_world_model/version_2/checkpoints/epoch=49-step=164350.ckpt"
+    # pretrained_checkpoint = config.get(
+    #    "pretrained_jepa_checkpoint",
+    #    "/home/cody/Documents/IHL/eye-world/tb_logs/ms_pacman/vjepa_rollout_world_model/version_2/checkpoints/epoch=49-step=164350.ckpt",
+    # )
+    # pretrained_checkpoint = "/home/cody/Documents/IHL/eye-world/tb_logs/ms_pacman/vjepa_rollout_world_model/version_2/checkpoints/epoch=49-step=164350.ckpt"
     load_matching_weights(
         model=model,
         checkpoint_path=pretrained_checkpoint,
@@ -1800,7 +1824,7 @@ def build_score_delta_model_for_planning(config, device):
 # ============================================================
 
 
-with skip_run("skip", "cem_planner_eval") as check, check():
+with skip_run("run", "cem_planner_eval") as check, check():
     game = config["games"][0]
     env_name = config.get("env_name", "ALE/MsPacman-v5")
 
@@ -1997,8 +2021,8 @@ def resolve_score_delta_checkpoint(config, env_name):
         3. checkpoint_dir/latest.pt
     """
 
-    checkpoint = config.get("score_delta_eval_checkpoint", None)
-
+    # checkpoint = config.get("score_delta_eval_checkpoint", None)
+    checkpoint = "tb_logs/ALE/MsPacman-v5/vjepa_score_delta_online/checkpoints/score_delta_step=215000.pt"
     if checkpoint is None:
         checkpoint = config.get("score_delta_resume_checkpoint", None)
 
@@ -2079,11 +2103,11 @@ def build_frozen_valuation_model_for_cem(config, device):
         config=config,
         embed_dim=embed_dim,
     )
-
-    pretrained_checkpoint = config.get(
-        "pretrained_jepa_checkpoint",
-        "/home/cody/Documents/IHL/eye-world/tb_logs/ms_pacman/vjepa_action_world_model/version_4/checkpoints/epoch=49-step=164350.ckpt",
-    )
+    pretrained_checkpoint = "/home/cody/Documents/IHL/eye-world/tb_logs/ms_pacman/vjepa_rollout_world_model/version_2/checkpoints/epoch=49-step=164350.ckpt"
+    # pretrained_checkpoint = config.get(
+    #    "pretrained_jepa_checkpoint",
+    #    "/home/cody/Documents/IHL/eye-world/tb_logs/ms_pacman/vjepa_action_world_model/version_4/checkpoints/epoch=49-step=164350.ckpt",
+    # )
 
     load_matching_weights(
         model=model,
@@ -2297,7 +2321,7 @@ def run_cem_planner_episode(
 # Frozen Valuation + CEM Action Search
 # ============================================================
 
-with skip_run("run", "cem_planner_with_frozen_valuation") as check, check():
+with skip_run("skip", "cem_planner_with_frozen_valuation") as check, check():
     game = config["games"][0]
     env_name = config.get("env_name", "ALE/MsPacman-v5")
 
