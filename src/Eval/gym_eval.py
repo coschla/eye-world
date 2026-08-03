@@ -5,6 +5,7 @@ import ale_py  # ⚠️ force registration of ALE namespace
 import gymnasium as gym
 import torch
 import torch.nn.functional as F
+import yaml
 
 # from config import *
 # from gym_manager import GymManager
@@ -78,68 +79,119 @@ class RuntimePreprocessor:
         return self.stack.step(obs)
 
 
+from typing import Any, Protocol
+
+import gymnasium as gym
+
+
+class RandomActionNet:
+    def __init__(self, config, action_space):
+        self.action_space = action_space
+
+    def act(self, data_packet):
+        return self.action_space.sample()
+
+
+class Preprocessor(Protocol):
+    """Interface every runtime preprocessor must implement."""
+
+    def reset(self, observation: Any) -> Any: ...
+
+    def step(self, observation: Any) -> Any: ...
+
+
+class ActionNet(Protocol):
+    """Interface every action-selection class must implement."""
+
+    def act(self, data_packet: Any) -> int: ...
+
+
 class GymManager:
     def __init__(
         self,
         config,
-        env_name="ALE/MsPacman-v5",
+        preprocessor_class,
+        action_net_class,
+        env_name: str = "ALE/MsPacman-v5",
     ):
-
         self.env = gym.make(env_name)
 
-        self.preprocessor = RuntimePreprocessor(config)
+        self.preprocessor = preprocessor_class(config)
+        self.action_net = action_net_class(
+            config=config,
+            action_space=self.env.action_space,
+        )
+
+        self.state = None
 
     def reset(self):
+        observation, info = self.env.reset()
 
-        obs, _ = self.env.reset()
+        self.state = self.preprocessor.reset(observation)
 
-        return self.preprocessor.reset(obs)
+        return self.state
 
-    def step(self, action):
+    def step(self):
+        # ActionNet receives the packet created by the preprocessor.
+        action = self.action_net.act(self.state)
 
-        obs, reward, terminated, truncated, _ = self.env.step(action)
+        observation, reward, terminated, truncated, info = self.env.step(action)
 
         done = terminated or truncated
+        self.state = self.preprocessor.step(observation)
 
-        state = self.preprocessor.step(obs)
+        return self.state, reward, done, info
 
-        return state, reward, done
+    def close(self):
+        self.env.close()
 
 
 ####################################################################
 # these are debug code to show it works
+
+
 def test():
-    manager = GymManager(config=None)
+    config_path = "configs/config.yaml"
 
-    state = manager.reset()
+    with open(config_path, "r", encoding="utf-8") as file:
+        config = yaml.load(file, Loader=yaml.SafeLoader)
 
-    print("Initial state")
-    print("Shape:", state.shape)
-    print("Dtype:", state.dtype)
+    manager = GymManager(
+        config=config,
+        preprocessor_class=RuntimePreprocessor,
+        action_net_class=RandomActionNet,
+    )
 
-    total_reward = 0
-    done = False
-    step_num = 0
+    try:
+        state = manager.reset()
 
-    while not done and step_num < 1000:
-        action = manager.env.action_space.sample()
+        print("Initial state")
+        print("Shape:", state.shape)
+        print("Dtype:", state.dtype)
 
-        state, reward, done = manager.step(action)
+        total_reward = 0
+        done = False
+        step_num = 0
 
-        total_reward += reward
-        step_num += 1
+        while not done and step_num < 1000:
+            state, reward, done, info = manager.step()
 
-        print(
-            f"step={step_num:4d} "
-            f"action={action:2d} "
-            f"reward={reward:5.1f} "
-            f"done={done} "
-            f"state_shape={tuple(state.shape)}"
-        )
+            total_reward += reward
+            step_num += 1
 
-    print("\nEpisode finished")
-    print("Steps:", step_num)
-    print("Total reward:", total_reward)
+            print(
+                f"step={step_num:4d} "
+                f"reward={reward:5.1f} "
+                f"done={done} "
+                f"state_shape={tuple(state.shape)}"
+            )
+
+        print("\nEpisode finished")
+        print("Steps:", step_num)
+        print("Total reward:", total_reward)
+
+    finally:
+        manager.close()
 
 
 def test_two():
@@ -153,3 +205,6 @@ def test_two():
             print(i, name)
     else:
         print("No get_action_meanings found.")
+
+
+test()
