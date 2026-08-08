@@ -137,3 +137,13 @@ class ComposePreprocessor:
             sample = p(sample)
 
         return sample
+
+    def reset(self):
+        """Reinitializes any stateful preprocessor in the pipeline (e.g. frame
+        stacks) by re-running its __init__ with the config it was built with.
+        Stateless preprocessors (e.g. Resize) don't store a config and are
+        left untouched.
+        """
+        for p in self.preprocessors:
+            if hasattr(p, "config"):
+                p.__init__(p.config)

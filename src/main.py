@@ -9,6 +9,8 @@ from torch.utils.data import DataLoader
 from data.data_write import create_webdataset
 from dataset.pre_process import ComposePreprocessor, Resize, Stack, StackWithLabels
 from dataset.torch_dataset import get_torch_dataloaders
+from eval.gym_eval import GymManager
+from models.action_net import ActionNet
 from models.networks import ConvNet, UNet
 from models.vjepa import (
     ActionEmbedding,
@@ -187,26 +189,22 @@ with skip_run("skip", "jepa_training_multi_game") as check, check():
         embed_dim=embed_dim,
         img_size=config.get("size_x", 84),
     )
-
     student = TransformerEncoder(
         embed_dim,
         depth=12,
         heads=heads,
         mlp_dim=mlp_dim,
     )
-
     net = VJEPAEncoder(
         tubelet_embed=tubelet_embed,
         student=student,
     )
-
     pred = Predictor(
         embed_dim,
         depth=4,
         heads=heads // 2,
         mlp_dim=mlp_dim,
     )
-
     model = VJEPA(
         model=net,
         pred=pred,
@@ -276,13 +274,12 @@ with skip_run("skip", "jepa_trainers") as check, check():
     trainer.fit(model, dataloaders["train"])
 
 
-with skip_run("run", "jepa_rollout_trainer_with_validation") as check, check():
+with skip_run("skip", "jepa_rollout_trainer_with_validation") as check, check():
     game = config["games"][0]
 
     logger = TensorBoardLogger("tb_logs", name=f"{game}/vjepa_rollout_world_model/")
 
     preprocessor = ComposePreprocessor([Resize(config), StackWithLabels(config)])
-
     dataloaders = get_torch_dataloaders(game, config, preprocessor=preprocessor)
 
     # -----------------------------
@@ -301,9 +298,7 @@ with skip_run("run", "jepa_rollout_trainer_with_validation") as check, check():
     )
 
     student = TransformerEncoder(embed_dim, depth=12, heads=heads, mlp_dim=mlp_dim)
-
     net = VJEPAEncoder(tubelet_embed=tubelet_embed, student=student)
-
     action_embed = ActionEmbedding()
 
     # reuse your existing ActionConditionVJEPA internals
@@ -355,3 +350,34 @@ with skip_run("run", "jepa_rollout_trainer_with_validation") as check, check():
         train_dataloaders=dataloaders["train"],
         val_dataloaders=dataloaders["test"],
     )
+
+
+with skip_run("skip", "gym_eval_trained") as check, check():
+    # Same transforms used for offline training data (see e.g. the
+    # "jepa_trainers" block above); swap these per network as needed.
+    pipeline = ComposePreprocessor([Resize(config), StackWithLabels(config)])
+    num_actions = config.get("num_actions", 18)
+
+    manager = GymManager(
+        config=config,
+        pipeline=pipeline,
+        action_net=ActionNet(num_actions),
+    )
+
+    try:
+        state = manager.reset()
+        print("Initial state (image) shape:", tuple(state[0].shape))
+
+        total_reward = 0
+        done = False
+        step_num = 0
+
+        while not done and step_num < 1000:
+            state, reward, done, info = manager.step()
+            total_reward += reward
+            step_num += 1
+
+        print("Episode finished. Steps:", step_num, "Total reward:", total_reward)
+
+    finally:
+        manager.close()

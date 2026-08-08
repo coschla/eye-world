@@ -120,5 +120,6 @@ tb_logs/*
 #tensorboard logs
 tb_logs/*
 
-# LLM 
+# LLM
 .claude/
+.DS_Store
