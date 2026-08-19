@@ -355,3 +355,108 @@ with skip_run("run", "jepa_rollout_trainer_with_validation") as check, check():
         train_dataloaders=dataloaders["train"],
         val_dataloaders=dataloaders["test"],
     )
+
+
+with (
+    skip_run(
+        "run",
+        "train_action_classifier",
+    ) as check,
+    check(),
+):
+    training_preprocessor = ComposePreprocessor(
+        [
+            Resize(config),
+            StackWithLabels(config),
+        ]
+    )
+
+    dataset_loaders = get_torch_dataloaders(
+        game,
+        config,
+        preprocessor=training_preprocessor,
+    )
+
+    if "train" not in dataset_loaders:
+        raise KeyError("get_torch_dataloaders() did not return a 'train' loader.")
+
+    data_loaders = {
+        "train": dataset_loaders["train"],
+    }
+
+    if "val" in dataset_loaders:
+        data_loaders["val"] = dataset_loaders["val"]
+
+    if "test" in dataset_loaders:
+        data_loaders["test"] = dataset_loaders["test"]
+
+    num_actions = int(config["num_actions"])
+
+    if num_actions != 9:
+        raise ValueError(
+            "This training setup expects num_actions: 9, "
+            f"but config contains {num_actions}."
+        )
+
+    action_network = ActionNet(
+        num_actions=num_actions,
+    )
+
+    training_model = ActionTraining(
+        hparams=config,
+        net=action_network,
+        data_loader=data_loaders,
+    )
+
+    CHECKPOINT_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=CHECKPOINT_DIR,
+        filename=f"{game}-action-classifier-{{epoch:03d}}",
+        save_last=True,
+        save_top_k=0,
+        every_n_epochs=1,
+    )
+
+    logger = TensorBoardLogger(
+        save_dir="tb_logs",
+        name=f"{game}/action_classifier",
+    )
+
+    if torch.cuda.is_available():
+        accelerator = "gpu"
+
+        if torch.cuda.is_bf16_supported():
+            precision = "bf16-mixed"
+        else:
+            precision = "16-mixed"
+    else:
+        accelerator = "cpu"
+        precision = "32-true"
+
+    trainer = pl.Trainer(
+        logger=logger,
+        callbacks=[checkpoint_callback],
+        accelerator=accelerator,
+        devices=1,
+        max_epochs=int(config["epochs"]),
+        precision=precision,
+        log_every_n_steps=10,
+    )
+
+    trainer.fit(training_model)
+
+    if data_loaders.get("test") is not None:
+        trainer.test(
+            training_model,
+            dataloaders=data_loaders["test"],
+        )
+
+    print("\nTraining complete")
+    print(
+        "Last checkpoint:",
+        checkpoint_callback.last_model_path,
+    )
