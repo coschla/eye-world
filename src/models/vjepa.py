@@ -1,9 +1,9 @@
-import torch.nn as nn
 import torch.nn.functional as F
 from kornia.contrib import compute_padding, extract_tensor_patches
+from torch import nn
 
 # from models.utils import get_3d_sincos_pos_embed
-from .utils import get_3d_sincos_pos_embed
+from utils import get_3d_sincos_pos_embed
 
 DEBUG = False  # set True for debugging
 

@@ -1,11 +1,13 @@
 import sys
 from collections import deque
+from pathlib import Path
 
 import ale_py  # ⚠️ force registration of ALE namespace
 import gymnasium as gym
 import torch
 import torch.nn.functional as F
 import yaml
+from gymnasium.wrappers import RecordVideo
 
 # from config import *
 # from gym_manager import GymManager
@@ -148,6 +150,50 @@ class GymManager:
 
 ####################################################################
 # these are debug code to show it works
+
+
+class RecordingGymManager(GymManager):
+    """
+    GymManager variant that records episodes as MP4 videos.
+
+    This leaves the original GymManager file unchanged.
+    """
+
+    def __init__(
+        self,
+        config,
+        preprocessor_class,
+        action_net_class,
+        env_name: str = "ALE/MsPacman-v5",
+        video_folder: str = "videos/action_classifier",
+    ):
+        video_path = Path(video_folder)
+        video_path.mkdir(parents=True, exist_ok=True)
+
+        # Atari video recording requires render_mode="rgb_array".
+        base_env = gym.make(
+            env_name,
+            render_mode="rgb_array",
+        )
+
+        self.env = RecordVideo(
+            base_env,
+            video_folder=str(video_path),
+            episode_trigger=lambda episode_id: True,
+            name_prefix="action-classifier",
+            disable_logger=False,
+        )
+
+        self.preprocessor = preprocessor_class(config)
+
+        self.action_net = action_net_class(
+            config=config,
+            action_space=self.env.action_space,
+        )
+
+        self.state = None
+
+        print("Video directory:", video_path.resolve())
 
 
 def test():

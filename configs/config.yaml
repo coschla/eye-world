@@ -4,10 +4,10 @@ meta_data_path: './data/raw/meta_data.csv'
 processed_data_path: './data/processed/'
 ckpt_path: '/home/cody/Documents/IHL/eye-world/tb_logs/ms_pacman/vjepa_world_model/version_1/checkpoints/epoch=49-step=164350.ckpt'
 # Pytorch
-epochs: 50
+epochs: 35
 # Game data
 games: ['ms_pacman']      
-
+num_actions : 9
 # Dataset parameters
 batch_size: 32
 num_workers: 3
@@ -20,7 +20,7 @@ size_y: 84
 train_sub: ['R','J']
 test_sub: ['K']
 grey_scale: True
-stack_length: 24 # total frames per sample (context + target)
+stack_length: 4 # total frames per sample (context + target)
 context_frames: &context_frames 4 # number of frames for student (context); remaining go to teacher
 sigma: 5
 eye_density: True
