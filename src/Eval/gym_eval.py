@@ -222,9 +222,9 @@ def test():
         while not done and step_num < 1000:
             state, reward, done, info = manager.step()
 
-            total_reward += reward
+            total_reward += reward  # when done total reward = 0
             step_num += 1
-
+            # 1 Action training code, action network, looping fixed
             print(
                 f"step={step_num:4d} "
                 f"reward={reward:5.1f} "
