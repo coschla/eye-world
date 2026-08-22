@@ -120,5 +120,11 @@ tb_logs/*
 #tensorboard logs
 tb_logs/*
 
-# LLM 
+# LLM
 .claude/
+
+# Videos
+videos/*
+
+# Checkpoints
+checkpoints/*

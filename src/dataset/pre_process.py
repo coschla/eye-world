@@ -32,6 +32,9 @@ class Resize:
                 ]
             )
 
+    def reset(self):
+        pass
+
     def __call__(self, sample):
         img, eye_gazes, action = sample
 
@@ -65,6 +68,9 @@ class Stack:
         self.stack = deque(maxlen=self.stack_len)
         self.config = config
 
+    def reset(self):
+        self.stack.clear()
+
     def __call__(self, sample):
         img, eye_gazes, action = sample
         if len(self.stack) < self.stack_len:
@@ -92,6 +98,11 @@ class StackWithLabels:
         self.img_stack = deque(maxlen=self.stack_len)
         self.gaze_stack = deque(maxlen=self.stack_len)
         self.action_stack = deque(maxlen=self.stack_len)
+
+    def reset(self):
+        self.img_stack.clear()
+        self.gaze_stack.clear()
+        self.action_stack.clear()
 
     def __call__(self, sample):
         img, eye_gaze, action = sample
@@ -131,6 +142,10 @@ class StackWithLabels:
 class ComposePreprocessor:
     def __init__(self, preprocessors):
         self.preprocessors = preprocessors
+
+    def reset(self):
+        for p in self.preprocessors:
+            p.reset()
 
     def __call__(self, sample):
         for p in self.preprocessors:

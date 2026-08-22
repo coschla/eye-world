@@ -83,6 +83,11 @@ class ActionTraining(pl.LightningModule):
         loader = self.data_loaders.get("val")
 
         if loader is None:
+            # No val split available; fall back to the test split so
+            # per-epoch checkpointing has a metric to monitor.
+            loader = self.data_loaders.get("test")
+
+        if loader is None:
             return []
 
         return loader

@@ -7,8 +7,8 @@ action_classifier_checkpoint_dir: 'checkpoints/action_classifier'
 # Pytorch
 epochs: 35
 # Game data
-games: ['ms_pacman']      
-num_actions : 9
+games: ['breakout']
+num_actions: 9
 # Dataset parameters
 batch_size: 32
 num_workers: 3
@@ -18,7 +18,7 @@ shuffle: False
 original_size: [210, 160]
 size_x: 84
 size_y: 84
-train_sub: ['R','J']
+train_sub: ['R', 'J']
 test_sub: ['K']
 grey_scale: True
 stack_length: 4 # total frames per sample (context + target)
@@ -35,8 +35,6 @@ patchy: 21
 use_masking: True
 tubelet_size: *context_frames # number of frames per tubelet
 
-
-
 # Data writer parameters
 data_writer:
   shard_write: False
@@ -44,7 +42,7 @@ data_writer:
   data_write_freq: 3
 
 #rollout
-rollout_steps : 12
+rollout_steps: 12
 
 use_gaze_for_predictor: false
 use_gaze_for_loss: false
@@ -53,11 +51,10 @@ gaze_sigma: 8.0
 patch_size: 16
 gaze_is_normalized: True
 
-
 #action pipeline
 score_delta_skip_terminal_rollouts: False
 
-death_penalty : 100.0
+death_penalty: 100.0
 
 policy_lr: 5e-5
 policy_depth: 4
@@ -65,9 +62,9 @@ policy_heads: 12
 policy_mlp_dim: 3072
 policy_dropout: 0.0
 
-policy_loss_weight:  1.0
+policy_loss_weight: 1.0
 policy_entropy_weight: 0.01
-policy_random_fraction : 0.25
+policy_random_fraction: 0.25
 policy_baseline_momentum: 0.99
 policy_normalize_advantage: True
 num_tubelets: 16
@@ -76,22 +73,18 @@ score_delta_num_envs: 16
 score_delta_updates: 1_000_000
 score_delta_lr: 1e-4
 score_delta_depth: 6
-score_delta_log_every:  10
+score_delta_log_every: 10
 score_delta_save_every: 5000
-score_delta_precision: "bf16"
+score_delta_precision: 'bf16'
 
-
-
-planner_horizon : 8
-planner_num_candidates : 512
-planner_cem_iterations : 4
+planner_horizon: 8
+planner_num_candidates: 512
+planner_cem_iterations: 4
 planner_elite_fraction: 0.1
-planner_eval_batch_size : 128
+planner_eval_batch_size: 128
 planner_momentum: 0.25
-planner_min_prob : 0.01
-planner_temperature : 1.0
-score_delta_eval_checkpoint : "tb_logs/ms_pacman/vjepa_rollout_world_model/version_2/checkpoints/epoch=49-step=164350.ckpt"
+planner_min_prob: 0.01
+planner_temperature: 1.0
+score_delta_eval_checkpoint: 'tb_logs/ms_pacman/vjepa_rollout_world_model/version_2/checkpoints/epoch=49-step=164350.ckpt'
 
-
-
-cem_eval_episodes : 5
+cem_eval_episodes: 5

@@ -13,8 +13,8 @@ from torch.utils.data import DataLoader
 from data.data_write import create_webdataset
 from dataset.pre_process import ComposePreprocessor, Resize, Stack, StackWithLabels
 from dataset.torch_dataset import get_torch_dataloaders
-from evaluate.gym_eval import GymManager, RuntimePreprocessor
-from models.action_net import ActionNet, CheckpointActionNet
+from evaluate.gym_eval import GymManager
+from models.action_net import ActionNet
 from models.networks import ConvNet, UNet
 from models.vjepa import (
     ActionEmbedding,
@@ -285,7 +285,7 @@ with skip_run("skip", "jepa_trainers") as check, check():
     trainer.fit(model, dataloaders["train"])
 
 
-with skip_run("skip", "jepa_rollout_trainer_with_validation") as check, check():
+with skip_run("skip", "jepa_rollout_with_validation") as check, check():
     game = config["games"][0]
 
     logger = TensorBoardLogger("tb_logs", name=f"{game}/vjepa_rollout_world_model/")
@@ -366,7 +366,9 @@ with skip_run("skip", "jepa_rollout_trainer_with_validation") as check, check():
     )
 
 
-with skip_run("run", "train_action_classifier") as check, check():
+with skip_run("skip", "train_action_classifier") as check, check():
+    game = config["games"][0]
+
     training_preprocessor = ComposePreprocessor(
         [
             Resize(config),
@@ -418,9 +420,10 @@ with skip_run("run", "train_action_classifier") as check, check():
 
     checkpoint_callback = ModelCheckpoint(
         dirpath=CHECKPOINT_DIR,
-        filename=f"{game}-action-classifier-{{epoch:03d}}",
-        save_last=True,
-        save_top_k=0,
+        filename=f"{game}-action-classifier-best",
+        monitor="val_loss",
+        mode="min",
+        save_top_k=1,
         every_n_epochs=1,
     )
 
@@ -455,11 +458,11 @@ with skip_run("run", "train_action_classifier") as check, check():
     )
 
 
-with skip_run("run", "run_action_classifier_in_gym_recording") as check, check():
+with skip_run("run", "action_classifier_in_gym_recording") as check, check():
     runtime_config = dict(config)
 
     runtime_config["action_classifier_checkpoint"] = (
-        "/home/cody/Documents/IHL/eye-world/checkpoints/action_classifier/last-v2.ckpt"
+        "checkpoints/action_classifier/breakout-action-classifier-best.ckpt"
     )
 
     num_episodes = int(runtime_config.get("gym_eval_episodes", 10))
@@ -470,16 +473,23 @@ with skip_run("run", "run_action_classifier_in_gym_recording") as check, check()
             100_00,
         )
     )
+    preprocessor = ComposePreprocessor(
+        [
+            Resize(config),
+            StackWithLabels(config),
+        ]
+    )
+    action_net = ActionNet(num_actions=int(config["num_actions"]))
 
     # Only record the first episode so evaluation doesn't produce
     # num_episodes separate video files.
     manager = GymManager(
         config=runtime_config,
-        preprocessor_class=RuntimePreprocessor,
-        action_net_class=CheckpointActionNet,
-        env_name="ALE/MsPacman-v5",
+        preprocessor_pipeline=preprocessor,
+        action_net=action_net,
+        env_name="ALE/Breakout-v5",
         record_video=True,
-        video_folder=("/home/cody/Documents/IHL/eye-world/videos/action_classifier"),
+        video_folder=("./video/action_classifier"),
         episode_trigger=lambda episode_id: episode_id == 0,
     )
 

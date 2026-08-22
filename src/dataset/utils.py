@@ -2,6 +2,10 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import torch
+import webdataset as wds
+
+from models.utils import atari_to_gym
 
 
 def get_game_meta_data(game: str, config: dict) -> pd.DataFrame:
@@ -39,6 +43,40 @@ def get_train_test_files(game, config):
             test_files.extend(name)
 
     return train_files, test_files
+
+
+def compute_action_class_weights(
+    files,
+    num_classes: int = 9,
+) -> torch.Tensor:
+    """
+    Inverse-frequency CrossEntropyLoss weights for ActionNet's canonical
+    action space, computed from the true label distribution in the given
+    WebDataset shards (e.g. train_files from get_train_test_files).
+
+    Atari action logs are heavily skewed toward NOOP (~76% in Breakout's
+    raw human-play data), so an unweighted loss lets the classifier
+    minimize loss by always predicting NOOP. Only the "cls" field is
+    read here, so this doesn't decode any images.
+    """
+
+    dataset = wds.WebDataset(
+        files,
+        shardshuffle=False,
+        nodesplitter=wds.split_by_worker,
+        empty_check=False,
+    ).to_tuple("cls")
+
+    counts = torch.zeros(num_classes, dtype=torch.long)
+
+    for (cls,) in dataset:
+        raw_action = int(cls.decode()) if isinstance(cls, bytes) else int(cls)
+        canonical_action = atari_to_gym(raw_action)
+        counts[canonical_action] += 1
+
+    counts = counts.clamp(min=1)
+
+    return (counts.sum() / (num_classes * counts)).float()
 
 
 class OnlineFixationDetector:

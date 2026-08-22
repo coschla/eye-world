@@ -174,3 +174,58 @@ def atari_to_gym(actions):
         return 8
 
     raise ValueError(f"Unknown Atari action: {actions}")
+
+
+# Canonical action names in the order ActionNet's 9-way output uses
+# (index == the Gym-style action ID produced by atari_to_gym).
+CANONICAL_ACTION_NAMES = (
+    "NOOP",
+    "UP",
+    "RIGHT",
+    "LEFT",
+    "DOWN",
+    "UPRIGHT",
+    "UPLEFT",
+    "DOWNRIGHT",
+    "DOWNLEFT",
+)
+
+
+def map_canonical_actions(action_meanings) -> list:
+    """
+    Build a lookup table from ActionNet's fixed 9-way canonical action
+    ID to whatever action IDs the current Gym env actually exposes.
+
+    Different games expose different minimal action sets (e.g. Breakout
+    is ["NOOP", "FIRE", "RIGHT", "LEFT"], MsPacman has all 9 directions),
+    so this must be recomputed per env rather than assumed to be 1:1.
+
+    Input:
+        action_meanings: list[str] from env.unwrapped.get_action_meanings()
+
+    Output:
+        list[int] of length 9, where mapping[canonical_id] is the action
+        ID to send to env.step().
+    """
+
+    noop_id = action_meanings.index("NOOP") if "NOOP" in action_meanings else 0
+
+    mapping = []
+
+    for name in CANONICAL_ACTION_NAMES:
+        if name in action_meanings:
+            mapping.append(action_meanings.index(name))
+            continue
+
+        # Diagonal/absent directions: fall back to a component direction
+        # the env does support (e.g. UPRIGHT -> RIGHT), else NOOP.
+        matched = noop_id
+
+        for component in ("RIGHT", "LEFT", "UP", "DOWN"):
+            if component in name and component in action_meanings:
+                matched = action_meanings.index(component)
+                break
+
+        mapping.append(matched)
+
+    return mapping
