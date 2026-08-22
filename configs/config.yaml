@@ -3,6 +3,7 @@ raw_data_path: './data/raw/'
 meta_data_path: './data/raw/meta_data.csv'
 processed_data_path: './data/processed/'
 ckpt_path: '/home/cody/Documents/IHL/eye-world/tb_logs/ms_pacman/vjepa_world_model/version_1/checkpoints/epoch=49-step=164350.ckpt'
+action_classifier_checkpoint_dir: 'checkpoints/action_classifier'
 # Pytorch
 epochs: 35
 # Game data

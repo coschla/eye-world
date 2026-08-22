@@ -1,14 +1,20 @@
+import statistics
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import pytorch_lightning as pl
 import torch
 import yaml
 from lightning.pytorch.loggers import TensorBoardLogger
+from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.strategies import DDPStrategy
 from torch.utils.data import DataLoader
 
 from data.data_write import create_webdataset
 from dataset.pre_process import ComposePreprocessor, Resize, Stack, StackWithLabels
 from dataset.torch_dataset import get_torch_dataloaders
+from evaluate.gym_eval import GymManager, RuntimePreprocessor
+from models.action_net import ActionNet, CheckpointActionNet
 from models.networks import ConvNet, UNet
 from models.vjepa import (
     ActionEmbedding,
@@ -17,6 +23,7 @@ from models.vjepa import (
     TubeletEmbedding,
     VJEPAEncoder,
 )
+from trainers.action_classifier import ActionTraining
 from trainers.gaze_predict import GazeTraining
 from trainers.jepa import VJEPA, ActionConditionVJEPA
 from trainers.jepa_rollout import RolloutActionJEPA
@@ -25,6 +32,8 @@ from utils import InterleavedDataset, skip_run
 # The configuration file
 config_path = "configs/config.yaml"
 config = yaml.load(open(str(config_path)), Loader=yaml.SafeLoader)
+
+CHECKPOINT_DIR = Path(config["action_classifier_checkpoint_dir"])
 
 
 with skip_run("skip", "data_cleaning") as check, check():
@@ -276,7 +285,7 @@ with skip_run("skip", "jepa_trainers") as check, check():
     trainer.fit(model, dataloaders["train"])
 
 
-with skip_run("run", "jepa_rollout_trainer_with_validation") as check, check():
+with skip_run("skip", "jepa_rollout_trainer_with_validation") as check, check():
     game = config["games"][0]
 
     logger = TensorBoardLogger("tb_logs", name=f"{game}/vjepa_rollout_world_model/")
@@ -357,13 +366,7 @@ with skip_run("run", "jepa_rollout_trainer_with_validation") as check, check():
     )
 
 
-with (
-    skip_run(
-        "run",
-        "train_action_classifier",
-    ) as check,
-    check(),
-):
+with skip_run("run", "train_action_classifier") as check, check():
     training_preprocessor = ComposePreprocessor(
         [
             Resize(config),
@@ -426,16 +429,7 @@ with (
         name=f"{game}/action_classifier",
     )
 
-    if torch.cuda.is_available():
-        accelerator = "gpu"
-
-        if torch.cuda.is_bf16_supported():
-            precision = "bf16-mixed"
-        else:
-            precision = "16-mixed"
-    else:
-        accelerator = "cpu"
-        precision = "32-true"
+    accelerator = "gpu" if torch.cuda.is_available() else "cpu"
 
     trainer = pl.Trainer(
         logger=logger,
@@ -443,7 +437,6 @@ with (
         accelerator=accelerator,
         devices=1,
         max_epochs=int(config["epochs"]),
-        precision=precision,
         log_every_n_steps=10,
     )
 
@@ -460,3 +453,79 @@ with (
         "Last checkpoint:",
         checkpoint_callback.last_model_path,
     )
+
+
+with skip_run("run", "run_action_classifier_in_gym_recording") as check, check():
+    runtime_config = dict(config)
+
+    runtime_config["action_classifier_checkpoint"] = (
+        "/home/cody/Documents/IHL/eye-world/checkpoints/action_classifier/last-v2.ckpt"
+    )
+
+    num_episodes = int(runtime_config.get("gym_eval_episodes", 10))
+
+    max_steps = int(
+        runtime_config.get(
+            "gym_max_steps",
+            100_00,
+        )
+    )
+
+    # Only record the first episode so evaluation doesn't produce
+    # num_episodes separate video files.
+    manager = GymManager(
+        config=runtime_config,
+        preprocessor_class=RuntimePreprocessor,
+        action_net_class=CheckpointActionNet,
+        env_name="ALE/MsPacman-v5",
+        record_video=True,
+        video_folder=("/home/cody/Documents/IHL/eye-world/videos/action_classifier"),
+        episode_trigger=lambda episode_id: episode_id == 0,
+    )
+
+    episode_rewards = []
+
+    try:
+        for episode in range(num_episodes):
+            state = manager.reset()
+
+            print(f"\nEpisode {episode + 1}/{num_episodes} started")
+            print("Initial state shape:", tuple(state.shape))
+
+            total_reward = 0.0
+            step_count = 0
+            final_info = {}
+            done = False
+
+            while not done and step_count < max_steps:
+                state, reward, done, info = manager.step()
+
+                total_reward += float(reward)
+                step_count += 1
+                final_info = info
+
+            episode_rewards.append(total_reward)
+
+            print(f"Episode {episode + 1} finished")
+            print("Steps:", step_count)
+            print("Total reward:", total_reward)
+
+            if "score" in final_info:
+                print("Final score:", final_info["score"])
+
+            if step_count >= max_steps and not done:
+                print(f"Episode stopped because it reached gym_max_steps={max_steps}.")
+
+        mean_reward = statistics.mean(episode_rewards)
+        reward_std = statistics.pstdev(episode_rewards)
+
+        print(f"\nEvaluated {num_episodes} episodes")
+        print("Per-episode rewards:", episode_rewards)
+        print(f"Mean reward: {mean_reward:.2f} (std: {reward_std:.2f})")
+
+        if hasattr(manager.action_net, "report"):
+            manager.action_net.report()
+
+    finally:
+        # RecordVideo writes/finalizes the MP4 when the environment closes.
+        manager.close()
