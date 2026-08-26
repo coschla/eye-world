@@ -7,7 +7,7 @@ action_classifier_checkpoint_dir: 'checkpoints/action_classifier'
 # Pytorch
 epochs: 35
 # Game data
-games: ['breakout']
+games: ['ms_pacman']
 num_actions: 9
 # Dataset parameters
 batch_size: 32

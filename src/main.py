@@ -462,7 +462,7 @@ with skip_run("run", "action_classifier_in_gym_recording") as check, check():
     runtime_config = dict(config)
 
     runtime_config["action_classifier_checkpoint"] = (
-        "checkpoints/action_classifier/breakout-action-classifier-best.ckpt"
+        "checkpoints/action_classifier/ms_pacman-action-classifier-best-v2.ckpt"
     )
 
     num_episodes = int(runtime_config.get("gym_eval_episodes", 10))
@@ -487,7 +487,7 @@ with skip_run("run", "action_classifier_in_gym_recording") as check, check():
         config=runtime_config,
         preprocessor_pipeline=preprocessor,
         action_net=action_net,
-        env_name="ALE/Breakout-v5",
+        env_name="ALE/MsPacman-v5",
         record_video=True,
         video_folder=("./video/action_classifier"),
         episode_trigger=lambda episode_id: episode_id == 0,
