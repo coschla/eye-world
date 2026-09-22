@@ -43,6 +43,69 @@ class ActionTraining(pl.LightningModule):
 
         if images.ndim == 5:
             images = images.squeeze(2)
+
+        # actions: [batch, sequence_length, 1]
+        actions = torch.as_tensor(actions)
+
+        # Remove trailing singleton dimension if present:
+        # [B, T, 1] -> [B, T]
+        if actions.ndim >= 3 and actions.shape[-1] == 1:
+            actions = actions.squeeze(-1)
+
+        # Only use the LAST action in each packet.
+        # [B, T] -> [B]
+        if actions.ndim > 1:
+            actions = actions[:, -1]
+
+        targets = atari_to_gym(actions).long()
+
+        if self.global_step == 0:
+            print("RAW ACTION SHAPE:", actions.shape)
+            print("RAW UNIQUE ACTIONS:", torch.unique(actions, return_counts=True))
+
+        targets = atari_to_gym(actions).long()
+
+        if self.global_step == 0:
+            print(
+                "MAPPED UNIQUE ACTIONS:",
+                torch.unique(targets, return_counts=True),
+            )
+
+        # net output: [B, 1, 9]
+        logits = self.net(images)
+
+        # We only make one prediction per packet:
+        # [B, 1, 9] -> [B, 9]
+        logits = logits[:, -1, :]
+
+        loss = self.criterion(logits, targets)
+
+        predicted_actions = logits.argmax(dim=-1)
+        accuracy = (predicted_actions == targets).float().mean()
+
+        self.log(
+            f"{stage}_loss",
+            loss,
+            on_step=stage == "train",
+            on_epoch=True,
+            prog_bar=True,
+        )
+        self.log(
+            f"{stage}_accuracy",
+            accuracy,
+            on_epoch=True,
+            prog_bar=True,
+        )
+
+        return loss
+
+    """def _shared_step(self, batch, stage: str) -> torch.Tensor:
+        images, _, actions = batch
+
+        images = images.float()
+
+        if images.ndim == 5:
+            images = images.squeeze(2)
         targets = atari_to_gym(torch.as_tensor(actions).squeeze(-1)).long()
 
         logits = self.net(images)
@@ -58,7 +121,7 @@ class ActionTraining(pl.LightningModule):
         self.log(f"{stage}_loss", loss, on_step=stage == "train", on_epoch=True, prog_bar=True)
         self.log(f"{stage}_accuracy", accuracy, on_epoch=True, prog_bar=True)
 
-        return loss
+        return loss"""
 
     def training_step(self, batch, batch_idx):
         return self._shared_step(batch, "train")

@@ -87,6 +87,7 @@ class Stack:
         return stacked, gaze_out
 
 
+'''
 class StackWithLabels:
     """
     Stacks images, gaze, and actions in temporal order. Keeps everything aligned with stack_len frames.
@@ -137,6 +138,140 @@ class StackWithLabels:
             stacked_gaze = torch.tensor(self.gaze_stack, dtype=torch.float32)
 
         return stacked_img, stacked_gaze, stacked_action
+
+'''
+
+
+class StackWithLabels:
+    """
+    Stacks images, gaze, and actions in temporal order.
+
+    Output ordering:
+        [t-3, t-2, t-1, t]
+
+    Therefore:
+        stacked_action[-1] == action for newest frame t
+    """
+
+    def __init__(self, config):
+        self.stack_len = config["stack_length"]
+        self.config = config
+
+        self.img_stack = deque(maxlen=self.stack_len)
+        self.gaze_stack = deque(maxlen=self.stack_len)
+        self.action_stack = deque(maxlen=self.stack_len)
+
+    def reset(self):
+        self.img_stack.clear()
+        self.gaze_stack.clear()
+        self.action_stack.clear()
+
+    def __call__(self, sample):
+        img, eye_gaze, action = sample
+
+        # -----------------------------------------------------
+        # INITIAL STACK
+        # -----------------------------------------------------
+        # When the first frame arrives, duplicate it so that
+        # the stack immediately has stack_len entries.
+        #
+        # Example:
+        # [frame_0, frame_0, frame_0, frame_0]
+        #
+        # and:
+        # [action_0, action_0, action_0, action_0]
+        # -----------------------------------------------------
+
+        if len(self.img_stack) < self.stack_len:
+            while len(self.img_stack) < self.stack_len:
+                self.img_stack.append(img)
+                self.gaze_stack.append(eye_gaze)
+                self.action_stack.append(action)
+
+        else:
+            # IMPORTANT:
+            # Everything gets appended in the SAME direction.
+            #
+            # deque(maxlen=N) automatically removes the
+            # oldest item from the left.
+            self.img_stack.append(img)
+            self.gaze_stack.append(eye_gaze)
+            self.action_stack.append(action)
+
+        # -----------------------------------------------------
+        # IMAGE STACK
+        # -----------------------------------------------------
+        #
+        # Temporal order:
+        #
+        # [oldest, ..., newest]
+        #
+        # For 4 RGB frames:
+        #
+        # 4 * 3 channels = 12 channels
+        #
+        # Result:
+        # (12, H, W)
+        # -----------------------------------------------------
+
+        stacked_img = torch.cat(
+            list(self.img_stack),
+            dim=0,
+        )
+
+        # -----------------------------------------------------
+        # ACTION STACK
+        # -----------------------------------------------------
+        #
+        # Temporal order is now identical to image_stack:
+        #
+        # [action t-3,
+        #  action t-2,
+        #  action t-1,
+        #  action t]
+        #
+        # Therefore:
+        #
+        # stacked_action[-1]
+        #
+        # is the action associated with the newest frame.
+        # -----------------------------------------------------
+
+        stacked_action = torch.tensor(
+            list(self.action_stack),
+            dtype=torch.long,
+        )
+
+        # -----------------------------------------------------
+        # GAZE STACK
+        # -----------------------------------------------------
+
+        if self.config.get("eye_density", False):
+            gaze_maps = [
+                eye_gaze_to_density_image(
+                    img.shape,
+                    gaze,
+                    self.config,
+                )
+                for gaze in self.gaze_stack
+            ]
+
+            stacked_gaze = torch.cat(
+                gaze_maps,
+                dim=0,
+            )
+
+        else:
+            stacked_gaze = torch.tensor(
+                list(self.gaze_stack),
+                dtype=torch.float32,
+            )
+
+        return (
+            stacked_img,
+            stacked_gaze,
+            stacked_action,
+        )
 
 
 class ComposePreprocessor:

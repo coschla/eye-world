@@ -91,6 +91,50 @@ def block_mask_tubelets_vectorized(tubelets, drop_ratio=0.5, block_size=2):
 
 def atari_to_gym(actions):
     """
+    Convert full ALE action IDs (0-17) to the
+    6-action Space Invaders Gym/ALE action space.
+
+    Gym SpaceInvaders:
+        0 = NOOP
+        1 = FIRE
+        2 = RIGHT
+        3 = LEFT
+        4 = RIGHTFIRE
+        5 = LEFTFIRE
+    """
+
+    if torch.is_tensor(actions):
+        actions = actions.long()
+
+        # Default unsupported actions to NOOP
+        gym_actions = torch.zeros_like(actions, dtype=torch.long)
+
+        gym_actions[actions == 0] = 0  # NOOP
+        gym_actions[actions == 1] = 1  # FIRE
+
+        gym_actions[actions == 3] = 2  # RIGHT
+        gym_actions[actions == 4] = 3  # LEFT
+
+        gym_actions[actions == 11] = 4  # RIGHTFIRE
+        gym_actions[actions == 12] = 5  # LEFTFIRE
+
+        return gym_actions
+
+    mapping = {
+        0: 0,  # NOOP
+        1: 1,  # FIRE
+        3: 2,  # RIGHT
+        4: 3,  # LEFT
+        11: 4,  # RIGHTFIRE
+        12: 5,  # LEFTFIRE
+    }
+
+    return mapping.get(actions, 0)
+
+
+'''
+def atari_to_gym(actions):
+    """
     Convert ALE/Atari action IDs to Gym-style action IDs.
 
     Input:
@@ -174,7 +218,7 @@ def atari_to_gym(actions):
         return 8
 
     raise ValueError(f"Unknown Atari action: {actions}")
-
+''' """'
 
 # Canonical action names in the order ActionNet's 9-way output uses
 # (index == the Gym-style action ID produced by atari_to_gym).
@@ -189,6 +233,7 @@ CANONICAL_ACTION_NAMES = (
     "DOWNRIGHT",
     "DOWNLEFT",
 )
+"""
 
 
 def map_canonical_actions(action_meanings) -> list:

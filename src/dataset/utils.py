@@ -47,7 +47,7 @@ def get_train_test_files(game, config):
 
 def compute_action_class_weights(
     files,
-    num_classes: int = 9,
+    num_classes: int = 6,  #################
 ) -> torch.Tensor:
     """
     Inverse-frequency CrossEntropyLoss weights for ActionNet's canonical
