@@ -20,7 +20,19 @@ class ActionTraining(pl.LightningModule):
 
         self.net = net
         self.data_loaders = data_loader
-        self.criterion = nn.CrossEntropyLoss()
+        class_weights = torch.tensor(
+            [
+                0.71,  # NOOP
+                0.67,  # FIRE
+                0.66,  # RIGHT
+                0.73,  # LEFT
+                8.67,  # RIGHTFIRE
+                9.75,  # LEFTFIRE
+            ],
+            dtype=torch.float32,
+        )
+
+        self.criterion = nn.CrossEntropyLoss(weight=class_weights)
 
         self.learning_rate = float(hparams.get("learning_rate", 1e-3))
         self.weight_decay = float(hparams.get("weight_decay", 0.0))

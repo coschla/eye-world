@@ -527,7 +527,7 @@ with skip_run("run", "action_classifier_in_gym_recording") as check, check():
     runtime_config = dict(config)
 
     runtime_config["action_classifier_checkpoint"] = (
-        "checkpoints/action_classifier/space_invaders-action-classifier-best-curent-test_1.ckpt"
+        "checkpoints/action_classifier/space_invaders-action-classifier-best-curent-test.ckpt"
     )
 
     num_episodes = int(runtime_config.get("gym_eval_episodes", 10))
