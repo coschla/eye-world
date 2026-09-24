@@ -1,3 +1,4 @@
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -5,6 +6,14 @@ import ale_py  # noqa: F401  # force registration of the ALE namespace
 import gymnasium as gym
 import torch
 from gymnasium.wrappers import RecordVideo
+
+from .utils import (
+    ALE_ACTION_NAMES,
+    print_episode_report,
+    print_header,
+    print_step,
+    print_summary_report,
+)
 
 # ActionNet only consumes the stacked image, never gaze/action, so these
 # placeholders just need to satisfy the caller's pipeline's sample shape.
@@ -50,7 +59,7 @@ class RuntimeActionNet:
         action_net,
         config: dict,
         action_space: Any,
-        action_meanings: list,
+        legal_action_ids: list,
     ):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -61,36 +70,26 @@ class RuntimeActionNet:
                 f"Action-classifier checkpoint was not found: {checkpoint_path}"
             )
 
-        # -----------------------------------------------------
-        # SPACE INVADERS SHOULD HAVE SIX ACTIONS
-        # -----------------------------------------------------
+        # The env must be built with full_action_space=True so env action
+        # IDs equal the raw ALE IDs (0-17) the classifier was trained on.
+        if action_space.n != 18:
+            raise RuntimeError(
+                f"Expected the full 18-action ALE space, but Gym reports "
+                f"{action_space.n}. Create the env with full_action_space=True."
+            )
 
-        expected_actions = [
-            "NOOP",
-            "FIRE",
-            "RIGHT",
-            "LEFT",
-            "RIGHTFIRE",
-            "LEFTFIRE",
-        ]
+        self.num_actions = int(action_space.n)
 
-        print(
-            "Gym action meanings:",
-            action_meanings,
+        # Only the game's own legal actions may be chosen; the other
+        # classes are masked out at inference.
+        self.action_mask = torch.full(
+            (self.num_actions,),
+            float("-inf"),
+            device=self.device,
         )
+        self.action_mask[list(legal_action_ids)] = 0.0
 
-        if action_space.n != 6:
-            raise RuntimeError(
-                f"Expected Space Invaders to expose 6 actions, "
-                f"but Gym reports {action_space.n}."
-            )
-
-        if list(action_meanings) != expected_actions:
-            raise RuntimeError(
-                "Unexpected Space Invaders action mapping.\n"
-                f"Expected: {expected_actions}\n"
-                f"Received: {list(action_meanings)}"
-            )
+        print("Legal actions:", list(legal_action_ids))
 
         self.model = action_net
 
@@ -232,18 +231,14 @@ class RuntimeActionNet:
             logits = self.model(state)
 
         # One action prediction for the four-frame stack.
-        # Expected: [B, 1, 6]
-        if logits.ndim != 3:
+        # Expected: [B, 1, 18]
+        if logits.ndim != 3 or logits.shape[-1] != self.num_actions:
             raise RuntimeError(
-                f"Expected ActionNet output [B, 1, 6], got {tuple(logits.shape)}"
+                f"Expected ActionNet output [B, 1, {self.num_actions}], "
+                f"got {tuple(logits.shape)}"
             )
 
-        if logits.shape[-1] != 6:
-            raise RuntimeError(
-                f"Expected six Space Invaders classes, got {tuple(logits.shape)}"
-            )
-
-        action_logits = logits[:, -1, :]
+        action_logits = logits[:, -1, :] + self.action_mask
 
         action = int(action_logits.argmax(dim=-1).item())
 
@@ -271,6 +266,7 @@ class GymManager:
             base_env = gym.make(
                 env_name,
                 render_mode="rgb_array",
+                full_action_space=True,
             )
 
             self.env = RecordVideo(
@@ -287,13 +283,16 @@ class GymManager:
             )
 
         else:
-            self.env = gym.make(env_name)
+            self.env = gym.make(env_name, full_action_space=True)
 
-        action_meanings = self.env.unwrapped.get_action_meanings()
+        # Legal (minimal) ALE action IDs for this particular game.
+        legal_action_ids = [
+            int(a) for a in self.env.unwrapped.ale.getMinimalActionSet()
+        ]
 
         print(
             "Environment actions:",
-            action_meanings,
+            self.env.unwrapped.get_action_meanings(),
         )
 
         self.preprocessor = RuntimePreprocessor(preprocessor_pipeline)
@@ -302,7 +301,7 @@ class GymManager:
             action_net,
             config=config,
             action_space=self.env.action_space,
-            action_meanings=action_meanings,
+            legal_action_ids=legal_action_ids,
         )
 
         self.state = None
@@ -340,13 +339,11 @@ class GymManager:
         # EXECUTE EXACTLY THAT ACTION
         # -----------------------------------------------------
 
-        (
-            observation,
-            reward,
-            terminated,
-            truncated,
-            info,
-        ) = self.env.step(action)
+        (observation, reward, terminated, truncated, info) = self.env.step(action)
+
+        # Expose the exact action sent to the env so callers can log it.
+        info = dict(info)
+        info["action"] = action
 
         done = terminated or truncated
 
@@ -385,3 +382,95 @@ class GymManager:
 
     def close(self):
         self.env.close()
+
+
+def run_episode(manager, max_steps: int, log_first_steps: int = 0) -> dict:
+    """Play one episode and return its raw stats (no reporting)."""
+    manager.reset()
+
+    total_reward = 0.0
+    step_count = 0
+    final_info = {}
+    done = False
+    action_counts = Counter()
+
+    while not done and step_count < max_steps:
+        _, reward, done, info = manager.step()
+
+        action = int(info["action"])
+
+        if not 0 <= action < len(ALE_ACTION_NAMES):
+            raise RuntimeError(
+                f"Invalid action: {action}. Expected 0-{len(ALE_ACTION_NAMES) - 1}."
+            )
+
+        action_counts[action] += 1
+
+        if step_count < log_first_steps:
+            print_step(step_count, action, float(reward))
+
+        total_reward += float(reward)
+        step_count += 1
+        final_info = info
+
+    return {
+        "steps": step_count,
+        "reward": total_reward,
+        "action_counts": action_counts,
+        "final_info": final_info,
+        "hit_max_steps": step_count >= max_steps and not done,
+    }
+
+
+def evaluate_policy(manager, num_episodes: int, max_steps: int) -> dict:
+    """
+    Run the GymManager's action classifier for num_episodes episodes, then
+    print the per-episode and overall reports (see evaluate/utils.py).
+
+    Returns {"episodes": [stats, ...], "rewards": [...],
+             "total_action_counts": Counter}.
+    """
+    episodes = []
+
+    try:
+        for episode in range(num_episodes):
+            print_header(f"Episode {episode + 1}/{num_episodes}")
+
+            episodes.append(
+                run_episode(
+                    manager,
+                    max_steps,
+                    log_first_steps=30 if episode == 0 else 0,
+                )
+            )
+    finally:
+        manager.close()
+
+    # Reports are generated once, after all episodes have finished.
+    total_action_counts = Counter()
+
+    for episode, stats in enumerate(episodes, start=1):
+        total_action_counts.update(stats["action_counts"])
+
+        print_episode_report(
+            episode,
+            stats["steps"],
+            stats["reward"],
+            stats["action_counts"],
+            stats["final_info"],
+            stats["hit_max_steps"],
+            max_steps,
+        )
+
+    rewards = [stats["reward"] for stats in episodes]
+
+    print_summary_report(rewards, total_action_counts)
+
+    if hasattr(manager.action_net, "report"):
+        manager.action_net.report()
+
+    return {
+        "episodes": episodes,
+        "rewards": rewards,
+        "total_action_counts": total_action_counts,
+    }

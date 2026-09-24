@@ -5,8 +5,6 @@ import pandas as pd
 import torch
 import webdataset as wds
 
-from models.utils import atari_to_gym
-
 
 def get_game_meta_data(game: str, config: dict) -> pd.DataFrame:
     """
@@ -47,11 +45,11 @@ def get_train_test_files(game, config):
 
 def compute_action_class_weights(
     files,
-    num_classes: int = 6,  #################
+    num_classes: int = 18,
 ) -> torch.Tensor:
     """
-    Inverse-frequency CrossEntropyLoss weights for ActionNet's canonical
-    action space, computed from the true label distribution in the given
+    Inverse-frequency CrossEntropyLoss weights over the full 18-way ALE
+    action space (raw action IDs, shared by every game), computed from the true label distribution in the given
     WebDataset shards (e.g. train_files from get_train_test_files).
 
     Atari action logs are heavily skewed toward NOOP (~76% in Breakout's
@@ -71,8 +69,7 @@ def compute_action_class_weights(
 
     for (cls,) in dataset:
         raw_action = int(cls.decode()) if isinstance(cls, bytes) else int(cls)
-        canonical_action = atari_to_gym(raw_action)
-        counts[canonical_action] += 1
+        counts[raw_action] += 1
 
     counts = counts.clamp(min=1)
 

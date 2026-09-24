@@ -8,7 +8,7 @@ action_classifier_checkpoint_dir: 'checkpoints/action_classifier'
 epochs: 35
 # Game data
 games: ['space_invaders']
-num_actions: 6
+num_actions: 18 # full ALE action space, shared across all games
 # Dataset parameters
 batch_size: 32
 num_workers: 3

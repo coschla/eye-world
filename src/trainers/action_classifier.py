@@ -2,8 +2,6 @@ import pytorch_lightning as pl
 import torch
 from torch import nn
 
-from models.utils import atari_to_gym
-
 # ================================================================
 # Lightning training module
 # ================================================================
@@ -15,23 +13,14 @@ class ActionTraining(pl.LightningModule):
         hparams: dict,
         net: nn.Module,
         data_loader: dict,
+        class_weights: torch.Tensor | None = None,
     ):
         super().__init__()
 
         self.net = net
         self.data_loaders = data_loader
-        class_weights = torch.tensor(
-            [
-                0.71,  # NOOP
-                0.67,  # FIRE
-                0.66,  # RIGHT
-                0.73,  # LEFT
-                8.67,  # RIGHTFIRE
-                9.75,  # LEFTFIRE
-            ],
-            dtype=torch.float32,
-        )
-
+        # Optional [num_actions] inverse-frequency weights over the full
+        # 18-way ALE action space (see compute_action_class_weights).
         self.criterion = nn.CrossEntropyLoss(weight=class_weights)
 
         self.learning_rate = float(hparams.get("learning_rate", 1e-3))
@@ -69,25 +58,18 @@ class ActionTraining(pl.LightningModule):
         if actions.ndim > 1:
             actions = actions[:, -1]
 
-        targets = atari_to_gym(actions).long()
+        # Targets are the raw ALE action IDs (0-17); no per-game remapping.
+        targets = actions.long()
 
         if self.global_step == 0:
-            print("RAW ACTION SHAPE:", actions.shape)
-            print("RAW UNIQUE ACTIONS:", torch.unique(actions, return_counts=True))
+            print("ACTION SHAPE:", actions.shape)
+            print("UNIQUE ACTIONS:", torch.unique(targets, return_counts=True))
 
-        targets = atari_to_gym(actions).long()
-
-        if self.global_step == 0:
-            print(
-                "MAPPED UNIQUE ACTIONS:",
-                torch.unique(targets, return_counts=True),
-            )
-
-        # net output: [B, 1, 9]
+        # net output: [B, 1, num_actions]
         logits = self.net(images)
 
         # We only make one prediction per packet:
-        # [B, 1, 9] -> [B, 9]
+        # [B, 1, num_actions] -> [B, num_actions]
         logits = logits[:, -1, :]
 
         loss = self.criterion(logits, targets)

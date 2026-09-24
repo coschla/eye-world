@@ -1,6 +1,8 @@
 import statistics
+from collections import Counter
 from pathlib import Path
 
+import gymnasium as gym
 import matplotlib.pyplot as plt
 import pytorch_lightning as pl
 import torch
@@ -13,7 +15,9 @@ from torch.utils.data import DataLoader
 from data.data_write import create_webdataset
 from dataset.pre_process import ComposePreprocessor, Resize, Stack, StackWithLabels
 from dataset.torch_dataset import get_torch_dataloaders
-from evaluate.gym_eval import GymManager
+from dataset.utils import compute_action_class_weights, get_train_test_files
+from evaluate.gym_eval import GymManager, evaluate_policy
+from evaluate.utils import ALE_ACTION_NAMES
 from models.action_net import ActionNet
 from models.networks import ConvNet, UNet
 from models.vjepa import (
@@ -385,9 +389,7 @@ with skip_run("skip", "train_action_classifier") as check, check():
     if "train" not in dataset_loaders:
         raise KeyError("get_torch_dataloaders() did not return a 'train' loader.")
 
-    data_loaders = {
-        "train": dataset_loaders["train"],
-    }
+    data_loaders = {"train": dataset_loaders["train"]}
 
     if "val" in dataset_loaders:
         data_loaders["val"] = dataset_loaders["val"]
@@ -397,73 +399,22 @@ with skip_run("skip", "train_action_classifier") as check, check():
 
     num_actions = int(config["num_actions"])
 
-    """if num_actions != 9:
+    if num_actions != len(ALE_ACTION_NAMES):
         raise ValueError(
-            "This training setup expects num_actions: 9, "
-            f"but config contains {num_actions}."
-        )"""
-
-    ##############################################################################
-    from collections import Counter
-
-    from trainers.utils import atari_to_gym
-
-    raw_counts = Counter()
-    mapped_counts = Counter()
-
-    for batch in data_loaders["train"]:
-        _, _, actions = batch
-
-        actions = torch.as_tensor(actions)
-
-        if actions.ndim >= 3 and actions.shape[-1] == 1:
-            actions = actions.squeeze(-1)
-
-        if actions.ndim > 1:
-            actions = actions[:, -1]
-
-        raw_counts.update(actions.cpu().tolist())
-
-        mapped = atari_to_gym(actions)
-        mapped_counts.update(mapped.cpu().tolist())
-
-    print("\nRAW ALE ACTION DISTRIBUTION")
-    raw_names = {
-        0: "NOOP",
-        1: "FIRE",
-        3: "RIGHT",
-        4: "LEFT",
-        11: "RIGHTFIRE",
-        12: "LEFTFIRE",
-    }
-
-    total = sum(raw_counts.values())
-
-    for action, count in sorted(raw_counts.items()):
-        print(
-            action,
-            raw_names.get(action, "UNKNOWN"),
-            count,
-            f"{100 * count / total:.2f}%",
+            f"The classifier uses the full ALE action space "
+            f"({len(ALE_ACTION_NAMES)} classes), but config has {num_actions}."
         )
 
-    print("\nGYM ACTION DISTRIBUTION")
+    # Inverse-frequency weights over the shared 18-way action space.
+    train_files = []
+    for g in game:
+        train_files.extend(get_train_test_files(g, config)[0])
 
-    gym_names = {
-        0: "NOOP",
-        1: "FIRE",
-        2: "RIGHT",
-        3: "LEFT",
-        4: "RIGHTFIRE",
-        5: "LEFTFIRE",
-    }
+    class_weights = compute_action_class_weights(train_files, num_actions)
 
-    total = sum(mapped_counts.values())
-
-    for action in range(6):
-        count = mapped_counts[action]
-        print(action, gym_names[action], count, f"{100 * count / total:.2f}%")
-    ##############################################################################
+    print("\nCLASS WEIGHTS")
+    for action_id, weight in enumerate(class_weights.tolist()):
+        print(action_id, ALE_ACTION_NAMES[action_id], f"{weight:.3f}")
 
     action_network = ActionNet(
         num_actions=num_actions,
@@ -473,6 +424,7 @@ with skip_run("skip", "train_action_classifier") as check, check():
         hparams=config,
         net=action_network,
         data_loader=data_loaders,
+        class_weights=class_weights,
     )
 
     CHECKPOINT_DIR.mkdir(
@@ -519,9 +471,6 @@ with skip_run("skip", "train_action_classifier") as check, check():
         checkpoint_callback.last_model_path,
     )
 
-from collections import Counter
-
-import gymnasium as gym
 
 with skip_run("run", "action_classifier_in_gym_recording") as check, check():
     runtime_config = dict(config)
@@ -530,324 +479,23 @@ with skip_run("run", "action_classifier_in_gym_recording") as check, check():
         "checkpoints/action_classifier/space_invaders-action-classifier-best-curent-test.ckpt"
     )
 
-    num_episodes = int(runtime_config.get("gym_eval_episodes", 10))
-
-    max_steps = int(runtime_config.get("gym_max_steps", 100_00))
-
-    preprocessor = ComposePreprocessor(
-        [
-            Resize(config),
-            StackWithLabels(config),
-        ]
-    )
-
-    action_net = ActionNet(num_actions=int(config["num_actions"]))
-
     manager = GymManager(
         config=runtime_config,
-        preprocessor_pipeline=preprocessor,
-        action_net=action_net,
+        preprocessor_pipeline=ComposePreprocessor(
+            [
+                Resize(config),
+                StackWithLabels(config),
+            ]
+        ),
+        action_net=ActionNet(num_actions=int(config["num_actions"])),
         env_name="ALE/SpaceInvaders-v5",
         record_video=True,
         video_folder="./video/action_classifier",
         episode_trigger=lambda episode_id: episode_id == 0,
     )
 
-    # ---------------------------------------------------------
-    # SPACE INVADERS ACTION NAMES
-    # ---------------------------------------------------------
-
-    gym_names = {
-        0: "NOOP",
-        1: "FIRE",
-        2: "RIGHT",
-        3: "LEFT",
-        4: "RIGHTFIRE",
-        5: "LEFTFIRE",
-    }
-
-    num_actions = int(config["num_actions"])
-
-    # ---------------------------------------------------------
-    # WRAPPER THAT CAPTURES THE REAL ACTION SENT TO GYM
-    # ---------------------------------------------------------
-
-    class ActionTrackingWrapper(gym.Wrapper):
-        def step(self, action):
-            # Convert torch/numpy scalar if necessary.
-            if hasattr(action, "item"):
-                action = action.item()
-
-            action = int(action)
-
-            # This is the ACTUAL action being sent to Atari.
-            obs, reward, terminated, truncated, info = self.env.step(action)
-
-            # Add it to info so the evaluation loop can track it.
-            info = dict(info)
-            info["action"] = action
-
-            return obs, reward, terminated, truncated, info
-
-    # ---------------------------------------------------------
-    # FIND GymManager's ENVIRONMENT AND WRAP IT
-    # ---------------------------------------------------------
-
-    if hasattr(manager, "env"):
-        manager.env = ActionTrackingWrapper(manager.env)
-
-    elif hasattr(manager, "_env"):
-        manager._env = ActionTrackingWrapper(manager._env)
-
-    else:
-        raise RuntimeError(
-            "Could not find GymManager environment. "
-            "Expected manager.env or manager._env."
-        )
-
-    # ---------------------------------------------------------
-    # TRACKING STORAGE
-    # ---------------------------------------------------------
-
-    episode_rewards = []
-
-    total_action_counts = Counter()
-    episode_action_counts = []
-
-    print("\n" + "=" * 60)
-    print("SPACE INVADERS ACTION MAPPING")
-    print("=" * 60)
-
-    for action_id in range(num_actions):
-        print(f"Action {action_id}: {gym_names.get(action_id, f'ACTION_{action_id}')}")
-
-    # ---------------------------------------------------------
-    # RUN
-    # ---------------------------------------------------------
-
-    try:
-        for episode in range(num_episodes):
-            state = manager.reset()
-
-            print("\n" + "=" * 60)
-            print(f"Episode {episode + 1}/{num_episodes} started")
-            print("=" * 60)
-
-            print(
-                "Initial state shape:",
-                tuple(state.shape),
-            )
-
-            total_reward = 0.0
-            step_count = 0
-            final_info = {}
-            done = False
-
-            action_counts = Counter()
-
-            while not done and step_count < max_steps:
-                state, reward, done, info = manager.step()
-
-                # -------------------------------------------------
-                # GET ACTUAL ACTION SENT TO GYM
-                # -------------------------------------------------
-
-                if "action" not in info:
-                    raise RuntimeError(
-                        "ActionTrackingWrapper did not receive an "
-                        "action from the environment.\n"
-                        f"Available info keys: {list(info.keys())}"
-                    )
-
-                action = int(info["action"])
-
-                # -------------------------------------------------
-                # VERIFY VALID ACTION
-                # -------------------------------------------------
-
-                if action < 0 or action >= num_actions:
-                    raise RuntimeError(
-                        f"Invalid action: {action}. Expected 0-{num_actions - 1}."
-                    )
-
-                # -------------------------------------------------
-                # COUNT ACTION
-                # -------------------------------------------------
-
-                action_counts[action] += 1
-                total_action_counts[action] += 1
-
-                # -------------------------------------------------
-                # DEBUG FIRST 30 ACTIONS
-                # -------------------------------------------------
-
-                if episode == 0 and step_count < 30:
-                    action_name = gym_names.get(
-                        action,
-                        f"ACTION_{action}",
-                    )
-
-                    print(
-                        f"Step {step_count:4d} | "
-                        f"Action {action} "
-                        f"({action_name:10s}) | "
-                        f"Reward {float(reward):7.2f}"
-                    )
-
-                # -------------------------------------------------
-                # METRICS
-                # -------------------------------------------------
-
-                total_reward += float(reward)
-                step_count += 1
-
-                final_info = info
-
-            # -----------------------------------------------------
-            # SAVE EPISODE
-            # -----------------------------------------------------
-
-            episode_rewards.append(total_reward)
-
-            episode_action_counts.append(action_counts.copy())
-
-            print()
-            print(f"Episode {episode + 1} finished")
-
-            print(
-                "Steps:",
-                step_count,
-            )
-
-            print(
-                "Total reward:",
-                total_reward,
-            )
-
-            if "score" in final_info:
-                print(
-                    "Final score:",
-                    final_info["score"],
-                )
-
-            # -----------------------------------------------------
-            # ACTION USAGE THIS EPISODE
-            # -----------------------------------------------------
-
-            print("\nAction usage:")
-
-            for action_id in range(num_actions):
-                count = action_counts[action_id]
-
-                percentage = 100.0 * count / step_count if step_count > 0 else 0.0
-
-                action_name = gym_names.get(
-                    action_id,
-                    f"ACTION_{action_id}",
-                )
-
-                print(
-                    f"  Action {action_id} "
-                    f"({action_name:10s}): "
-                    f"{count:6d} times "
-                    f"({percentage:6.2f}%)"
-                )
-
-            if step_count >= max_steps and not done:
-                print(f"Episode stopped because it reached gym_max_steps={max_steps}.")
-
-        # ---------------------------------------------------------
-        # REWARD SUMMARY
-        # ---------------------------------------------------------
-
-        mean_reward = statistics.mean(episode_rewards)
-
-        reward_std = statistics.pstdev(episode_rewards)
-
-        print("\n" + "=" * 60)
-        print("EVALUATION SUMMARY")
-        print("=" * 60)
-
-        print(f"Evaluated {num_episodes} episodes")
-
-        print(
-            "Per-episode rewards:",
-            episode_rewards,
-        )
-
-        print(f"Mean reward: {mean_reward:.2f} (std: {reward_std:.2f})")
-
-        # ---------------------------------------------------------
-        # TOTAL ACTION USAGE
-        # ---------------------------------------------------------
-
-        total_actions = sum(total_action_counts.values())
-
-        print("\n" + "=" * 60)
-        print("TOTAL ACTION USAGE")
-        print("=" * 60)
-
-        print(f"Total actions executed: {total_actions}")
-
-        for action_id in range(num_actions):
-            count = total_action_counts[action_id]
-
-            percentage = 100.0 * count / total_actions if total_actions > 0 else 0.0
-
-            action_name = gym_names.get(
-                action_id,
-                f"ACTION_{action_id}",
-            )
-
-            print(
-                f"Action {action_id} "
-                f"({action_name:10s}): "
-                f"{count:6d} times "
-                f"({percentage:6.2f}%)"
-            )
-
-        # ---------------------------------------------------------
-        # PER-EPISODE SUMMARY
-        # ---------------------------------------------------------
-
-        print("\n" + "=" * 60)
-        print("ACTION COUNTS BY GAMEPLAY SESSION")
-        print("=" * 60)
-
-        for episode_id, counts in enumerate(
-            episode_action_counts,
-            start=1,
-        ):
-            print(f"\nEpisode {episode_id}")
-
-            episode_total = sum(counts.values())
-
-            for action_id in range(num_actions):
-                count = counts[action_id]
-
-                percentage = 100.0 * count / episode_total if episode_total > 0 else 0.0
-
-                action_name = gym_names.get(
-                    action_id,
-                    f"ACTION_{action_id}",
-                )
-
-                print(
-                    f"  Action {action_id} "
-                    f"({action_name:10s}): "
-                    f"{count:6d} "
-                    f"({percentage:6.2f}%)"
-                )
-
-        # ---------------------------------------------------------
-        # EXISTING ACTION NET REPORT
-        # ---------------------------------------------------------
-
-        if hasattr(
-            manager.action_net,
-            "report",
-        ):
-            manager.action_net.report()
-
-    finally:
-        manager.close()
+    evaluate_policy(
+        manager,
+        num_episodes=int(runtime_config.get("gym_eval_episodes", 10)),
+        max_steps=int(runtime_config.get("gym_max_steps", 10_000)),
+    )

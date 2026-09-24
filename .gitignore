@@ -128,3 +128,6 @@ videos/*
 
 # Checkpoints
 checkpoints/*
+
+# Model checkpoints (can be very large)
+*.ckpt
