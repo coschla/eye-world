@@ -1,8 +1,5 @@
-import statistics
-from collections import Counter
 from pathlib import Path
 
-import gymnasium as gym
 import matplotlib.pyplot as plt
 import pytorch_lightning as pl
 import torch
@@ -127,7 +124,7 @@ with skip_run("skip", "gaze_prediction_conv_deconv") as check, check():
     trainer.fit(model)
 
 
-with skip_run("skip", "jepa_training_multi_game") as check, check():
+with skip_run("run", "jepa_training_multi_game") as check, check():
     logger = TensorBoardLogger(
         "tb_logs",
         name="multi_game/vjepa_world_model/",
@@ -472,11 +469,11 @@ with skip_run("skip", "train_action_classifier") as check, check():
     )
 
 
-with skip_run("run", "action_classifier_in_gym_recording") as check, check():
+with skip_run("skip", "action_classifier_in_gym_recording") as check, check():
     runtime_config = dict(config)
 
     runtime_config["action_classifier_checkpoint"] = (
-        "checkpoints/action_classifier/space_invaders-action-classifier-best-curent-test.ckpt"
+        "checkpoints/action_classifier/ms_pacman-action-classifier-best-curent-test-v1.ckpt"
     )
 
     manager = GymManager(
@@ -488,10 +485,242 @@ with skip_run("run", "action_classifier_in_gym_recording") as check, check():
             ]
         ),
         action_net=ActionNet(num_actions=int(config["num_actions"])),
-        env_name="ALE/SpaceInvaders-v5",
+        # env_name="ALE/SpaceInvaders-v5",
+        env_name="ALE/Pacman-v5",
         record_video=True,
         video_folder="./video/action_classifier",
         episode_trigger=lambda episode_id: episode_id == 0,
+    )
+
+    evaluate_policy(
+        manager,
+        num_episodes=int(runtime_config.get("gym_eval_episodes", 10)),
+        max_steps=int(runtime_config.get("gym_max_steps", 10_000)),
+    )
+
+
+# from models.action_jepa_history import ActionNet
+
+# from models.action_net import ActionNet
+from models.action_jepa_history import ActionNet
+from trainers.jepa_action import ActionHistoryTraining
+
+with (
+    skip_run(
+        "skip",
+        "train_action_history_classifier",
+    ) as check,
+    check(),
+):
+    game = config["games"]
+
+    games_name = "_".join(game)
+
+    # ---------------------------------------------------------
+    # Existing preprocessing
+    # ---------------------------------------------------------
+
+    training_preprocessor = ComposePreprocessor(
+        [
+            Resize(config),
+            StackWithLabels(config),
+        ]
+    )
+
+    dataset_loaders = get_torch_dataloaders(
+        game,
+        config,
+        preprocessor=training_preprocessor,
+    )
+
+    if "train" not in dataset_loaders:
+        raise KeyError("get_torch_dataloaders() did not return a 'train' loader.")
+
+    data_loaders = {"train": dataset_loaders["train"]}
+
+    if "val" in dataset_loaders:
+        data_loaders["val"] = dataset_loaders["val"]
+
+    if "test" in dataset_loaders:
+        data_loaders["test"] = dataset_loaders["test"]
+
+    # ---------------------------------------------------------
+    # Full ALE action space
+    # ---------------------------------------------------------
+
+    num_actions = int(config["num_actions"])
+
+    if num_actions != len(ALE_ACTION_NAMES):
+        raise ValueError(
+            "The classifier uses the full ALE "
+            f"action space ({len(ALE_ACTION_NAMES)} classes), "
+            f"but config has {num_actions}."
+        )
+
+    # ---------------------------------------------------------
+    # Class weights
+    # ---------------------------------------------------------
+
+    train_files = []
+
+    for g in game:
+        train_files.extend(
+            get_train_test_files(
+                g,
+                config,
+            )[0]
+        )
+
+    class_weights = compute_action_class_weights(
+        train_files,
+        num_actions,
+    )
+
+    print("\nCLASS WEIGHTS")
+
+    for (
+        action_id,
+        weight,
+    ) in enumerate(class_weights.tolist()):
+        print(
+            action_id,
+            ALE_ACTION_NAMES[action_id],
+            f"{weight:.3f}",
+        )
+
+    # ---------------------------------------------------------
+    # Action-conditioned JEPA classifier
+    # ---------------------------------------------------------
+
+    action_network = ActionNet(
+        num_actions=num_actions,
+        config=config,
+        jepa_checkpoint=None,  # config["jepa_checkpoint"],
+        # First experiment:
+        #
+        # pretrained JEPA stays fixed
+        # action-history token learns
+        # classifier learns
+        freeze_tubelet=True,
+        freeze_student=True,
+    )
+
+    # ---------------------------------------------------------
+    # Lightning module
+    # ---------------------------------------------------------
+
+    training_model = ActionHistoryTraining(
+        hparams=config,
+        net=action_network,
+        data_loader=data_loaders,
+        class_weights=class_weights,
+    )
+
+    # ---------------------------------------------------------
+    # Checkpoint directory
+    # ---------------------------------------------------------
+
+    CHECKPOINT_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    # ---------------------------------------------------------
+    # Best checkpoint
+    # ---------------------------------------------------------
+
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=CHECKPOINT_DIR,
+        filename=(f"{games_name}-action-history-jepa-best"),
+        monitor="val_loss",
+        mode="min",
+        save_top_k=1,
+        every_n_epochs=1,
+    )
+
+    # ---------------------------------------------------------
+    # TensorBoard
+    # ---------------------------------------------------------
+
+    logger = TensorBoardLogger(
+        save_dir="tb_logs",
+        name=(f"{games_name}/action_history_jepa_classifier"),
+    )
+
+    # ---------------------------------------------------------
+    # Trainer
+    # ---------------------------------------------------------
+
+    accelerator = "gpu" if torch.cuda.is_available() else "cpu"
+
+    trainer = pl.Trainer(
+        logger=logger,
+        callbacks=[checkpoint_callback],
+        accelerator=accelerator,
+        devices=1,
+        max_epochs=int(config["epochs"]),
+        log_every_n_steps=10,
+    )
+
+    # ---------------------------------------------------------
+    # Train
+    # ---------------------------------------------------------
+
+    trainer.fit(training_model)
+
+    # ---------------------------------------------------------
+    # Test
+    # ---------------------------------------------------------
+
+    if data_loaders.get("test") is not None:
+        trainer.test(
+            training_model,
+            dataloaders=data_loaders["test"],
+        )
+
+    print("\nTraining complete")
+
+    print(
+        "Best checkpoint:",
+        checkpoint_callback.best_model_path,
+    )
+
+
+from models.action_jepa_history import ActionNet as JEPAActionNet
+
+with (
+    skip_run(
+        "run",
+        "action_history_classifier_in_gym_recording",
+    ) as check,
+    check(),
+):
+    runtime_config = dict(config)
+
+    runtime_config["action_classifier_checkpoint"] = (
+        "/home/cody/Documents/IHL/eye-world/checkpoints/action_classifier/space_invaders-action-history-jepa-best.ckpt"
+    )
+
+    manager = GymManager(
+        config=runtime_config,
+        preprocessor_pipeline=ComposePreprocessor(
+            [
+                Resize(runtime_config),
+                StackWithLabels(runtime_config),
+            ]
+        ),
+        action_net=JEPAActionNet(
+            num_actions=int(runtime_config["num_actions"]),
+            config=runtime_config,
+            jepa_checkpoint=None,
+            freeze_tubelet=True,
+            freeze_student=True,
+        ),
+        env_name="ALE/SpaceInvaders-v5",
+        record_video=True,
+        video_folder="./video/action_history_classifier",
+        episode_trigger=lambda episode_id: episode_id == 0,
+        action_history_length=3,
     )
 
     evaluate_policy(
