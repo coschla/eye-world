@@ -924,6 +924,10 @@ def evaluate_policy(
     }
 
 
+# TODO: everything between this line and the closing triple quote at the end of
+# the file is an old copy of RuntimePreprocessor, RuntimeActionNet, GymManager,
+# run_episode and evaluate_policy inside a string, so it never runs. Delete it
+# so there is only one version to maintain.
 '''
 class RuntimePreprocessor:
     """

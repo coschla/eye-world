@@ -16,7 +16,7 @@ from dataset.utils import compute_action_class_weights, get_train_test_files
 from evaluate.gym_eval import GymManager, evaluate_policy
 from evaluate.utils import ALE_ACTION_NAMES
 from models.action_jepa_history import ActionNet as JEPAActionNet
-from models.action_net import ActionNet
+from models.action_net import ACPredictor, ActionNet
 from models.networks import ConvNet, UNet
 from models.vjepa import (
     ActionEmbedding,
@@ -29,7 +29,7 @@ from trainers.action_classifier import ActionTraining
 from trainers.gaze_predict import GazeTraining
 from trainers.jepa import VJEPA, ActionConditionVJEPA
 from trainers.jepa_action import ActionHistoryTraining
-from trainers.jepa_rollout import RolloutActionJEPA
+from trainers.jepa_rollout import RolloutActionJEPA, load_encoder_weights
 from utils import InterleavedDataset, skip_run
 
 # The configuration file
@@ -139,9 +139,7 @@ with skip_run("run", "jepa_training_multi_game") as check, check():
         ]
     )
 
-    # --------------------------------------------------
     # Load all game datasets
-    # --------------------------------------------------
     datasets = []
     example_loader = None
 
@@ -165,9 +163,7 @@ with skip_run("run", "jepa_training_multi_game") as check, check():
 
     combined_dataset = InterleavedDataset(datasets)
 
-    # --------------------------------------------------
     # Build train dataloader
-    # --------------------------------------------------
     train_loader = DataLoader(
         combined_dataset,
         batch_size=example_loader.batch_size,
@@ -176,17 +172,13 @@ with skip_run("run", "jepa_training_multi_game") as check, check():
         pin_memory=getattr(example_loader, "pin_memory", False),
     )
 
-    # --------------------------------------------------
     # Verify batch shape
-    # --------------------------------------------------
     for x, y in train_loader:
         print("Train batch shape:", x.shape)
         print("Label shape:", y.shape)
         break
 
-    # --------------------------------------------------
     # Model configuration
-    # --------------------------------------------------
     patch_dim = 1 if config.get("grey_scale", True) else 3
 
     embed_dim = 768
@@ -228,9 +220,7 @@ with skip_run("run", "jepa_training_multi_game") as check, check():
         ema_decay=0.996,
     )
 
-    # --------------------------------------------------
     # Trainer
-    # --------------------------------------------------
     trainer = pl.Trainer(
         logger=logger,
         max_epochs=config["epochs"],
@@ -240,9 +230,7 @@ with skip_run("run", "jepa_training_multi_game") as check, check():
         log_every_n_steps=10,
     )
 
-    # --------------------------------------------------
     # Train
-    # --------------------------------------------------
     trainer.fit(model, train_loader)
 
 
@@ -288,18 +276,35 @@ with skip_run("skip", "jepa_trainers") as check, check():
     trainer.fit(model, dataloaders["train"])
 
 
+# TODO: run this block and check the validation curves in TensorBoard:
+#   1. val/ar_loss_h1 must be lower than val/copy_loss_h1. The copy loss is
+#      "the next latent equals the current one"; if the model does not beat it,
+#      it has not learned any dynamics.
+#   2. val/shuffled_action_loss must be clearly higher than val/ar_loss. If it
+#      is about the same, the model ignores the actions.
+#   3. train/tf_loss and train/ar_loss should both go down.
+#   4. Check the action alignment in RolloutActionJEPA._encode. It assumes the
+#      action recorded with a frame is the one that leads to the next frame.
+#      Confirm this against the dataset; if it is the other way round, shift
+#      the slice by one.
+#   If something looks wrong, work out why before changing the model.
 with skip_run("skip", "jepa_rollout_with_validation") as check, check():
     game = config["games"][0]
 
     logger = TensorBoardLogger("tb_logs", name=f"{game}/vjepa_rollout_world_model/")
 
-    preprocessor = ComposePreprocessor([Resize(config), StackWithLabels(config)])
+    # Each sample holds the context window plus ac_num_steps future frames.
+    # stack_length stays 4 in the shared config because pretraining needs it.
+    ac_config = {
+        **config,
+        "stack_length": int(config["context_frames"]) + int(config["ac_num_steps"]),
+    }
 
-    dataloaders = get_torch_dataloaders(game, config, preprocessor=preprocessor)
+    preprocessor = ComposePreprocessor([Resize(ac_config), StackWithLabels(ac_config)])
 
-    # -----------------------------
-    # MODEL (same as your 2nd loop)
-    # -----------------------------
+    dataloaders = get_torch_dataloaders(game, ac_config, preprocessor=preprocessor)
+
+    # MODEL: frozen pretrained encoder + action-conditioned predictor
     patch_dim = 1 if config.get("grey_scale_v", True) else 3
     embed_dim = 768
     heads = 12
@@ -316,44 +321,24 @@ with skip_run("skip", "jepa_rollout_with_validation") as check, check():
 
     net = VJEPAEncoder(tubelet_embed=tubelet_embed, student=student)
 
-    action_embed = ActionEmbedding()
+    # Pretrained VJEPA tubelet embedding + student (raises if the file is missing).
+    load_encoder_weights(net, config["ckpt_path"])
 
-    # reuse your existing ActionConditionVJEPA internals
-    base_model = ActionConditionVJEPA(
-        model=net,
-        action_embed=action_embed,
-        config=config,
-        lr=1e-4,
-        ema_decay=0.996,
+    predictor = ACPredictor(
+        embed_dim=embed_dim,
+        dim=int(config["ac_dim"]),
+        depth=int(config["ac_depth"]),
+        heads=int(config["ac_heads"]),
+        num_actions=int(config["num_actions"]),
+        num_patches=tubelet_embed.num_patches,
+        max_steps=int(config["ac_num_steps"]),
     )
 
-    rollout_steps = config.get("rollout_steps", 12)
+    model = RolloutActionJEPA(net, predictor, ac_config)
 
-    # -----------------------------
-    # TRAINER
-    # -----------------------------
-    model = RolloutActionJEPA(base_model, rollout_steps)
-
-    # -----------------------------
-    # LOAD PREVIOUS CHECKPOINT
-    # -----------------------------
-    ckpt = torch.load(
-        "/home/cody/Documents/IHL/eye-world/tb_logs/ms_pacman/vjepa_action_world_model/version_0/checkpoints/epoch=49-step=164350.ckpt",
-        map_location="cpu",
-    )
-
-    state_dict = ckpt["state_dict"]
-
-    # Remove obsolete teacher weights
-    state_dict = {k: v for k, v in state_dict.items() if not k.startswith("teacher.")}
-
-    missing, unexpected = model.load_state_dict(state_dict, strict=False)
-
-    print("Missing keys:", missing)
-    print("Unexpected keys:", unexpected)
-    print(dataloaders.keys())
     trainer = pl.Trainer(
         logger=logger,
+        callbacks=[ModelCheckpoint(monitor="val/ar_loss", mode="min", save_top_k=1)],
         strategy=DDPStrategy(find_unused_parameters=True),
         accelerator="gpu",
         devices=1,
@@ -504,9 +489,7 @@ with skip_run("skip", "train_action_history_classifier") as check, check():
 
     games_name = "_".join(game)
 
-    # ---------------------------------------------------------
     # Existing preprocessing
-    # ---------------------------------------------------------
 
     training_preprocessor = ComposePreprocessor(
         [
@@ -526,16 +509,17 @@ with skip_run("skip", "train_action_history_classifier") as check, check():
 
     data_loaders = {"train": dataset_loaders["train"]}
 
+    # TODO: get_torch_dataloaders only returns "train" and "test", so the test
+    # set is used as validation (it picks the best checkpoint) and is then
+    # reported as the test result. Add a real validation split, e.g. hold out
+    # some of the train subjects, so the test number is not optimistic.
     if "val" in dataset_loaders:
         data_loaders["val"] = dataset_loaders["val"]
 
     if "test" in dataset_loaders:
         data_loaders["test"] = dataset_loaders["test"]
 
-    # ---------------------------------------------------------
     # Full ALE action space
-    # ---------------------------------------------------------
-
     num_actions = int(config["num_actions"])
 
     if num_actions != len(ALE_ACTION_NAMES):
@@ -545,10 +529,7 @@ with skip_run("skip", "train_action_history_classifier") as check, check():
             f"but config has {num_actions}."
         )
 
-    # ---------------------------------------------------------
     # Class weights
-    # ---------------------------------------------------------
-
     train_files = []
 
     for g in game:
@@ -576,10 +557,7 @@ with skip_run("skip", "train_action_history_classifier") as check, check():
             f"{weight:.3f}",
         )
 
-    # ---------------------------------------------------------
     # Action-conditioned JEPA classifier
-    # ---------------------------------------------------------
-
     action_network = JEPAActionNet(
         num_actions=num_actions,
         config=config,
@@ -595,10 +573,7 @@ with skip_run("skip", "train_action_history_classifier") as check, check():
         freeze_student=True,
     )
 
-    # ---------------------------------------------------------
     # Lightning module
-    # ---------------------------------------------------------
-
     training_model = ActionHistoryTraining(
         hparams=config,
         net=action_network,
@@ -606,19 +581,13 @@ with skip_run("skip", "train_action_history_classifier") as check, check():
         class_weights=class_weights,
     )
 
-    # ---------------------------------------------------------
     # Checkpoint directory
-    # ---------------------------------------------------------
-
     CHECKPOINT_DIR.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    # ---------------------------------------------------------
     # Best checkpoint
-    # ---------------------------------------------------------
-
     checkpoint_callback = ModelCheckpoint(
         dirpath=CHECKPOINT_DIR,
         filename=(f"{games_name}-action-history-jepa-best"),
@@ -628,19 +597,13 @@ with skip_run("skip", "train_action_history_classifier") as check, check():
         every_n_epochs=1,
     )
 
-    # ---------------------------------------------------------
     # TensorBoard
-    # ---------------------------------------------------------
-
     logger = TensorBoardLogger(
         save_dir="tb_logs",
         name=(f"{games_name}/action_history_jepa_classifier"),
     )
 
-    # ---------------------------------------------------------
     # Trainer
-    # ---------------------------------------------------------
-
     accelerator = "gpu" if torch.cuda.is_available() else "cpu"
 
     trainer = pl.Trainer(
@@ -652,16 +615,10 @@ with skip_run("skip", "train_action_history_classifier") as check, check():
         log_every_n_steps=10,
     )
 
-    # ---------------------------------------------------------
     # Train
-    # ---------------------------------------------------------
-
     trainer.fit(training_model)
 
-    # ---------------------------------------------------------
     # Test
-    # ---------------------------------------------------------
-
     if data_loaders.get("test") is not None:
         # "best" = the val_loss checkpoint, the same one the gym eval loads.
         trainer.test(
