@@ -4,6 +4,12 @@ meta_data_path: './data/raw/meta_data.csv'
 processed_data_path: './data/processed/'
 ckpt_path: '/home/cody/Documents/IHL/eye-world/tb_logs/ms_pacman/vjepa_world_model/version_1/checkpoints/epoch=49-step=164350.ckpt'
 action_classifier_checkpoint_dir: 'checkpoints/action_classifier'
+action_classifier_checkpoint: 'checkpoints/action_classifier/space_invaders-action-history-jepa-best.ckpt'
+
+# Gym evaluation (env id follows games[0]; channels follow stack_length/grey_scale)
+gym_eval_episodes: 10
+gym_max_steps: 10000
+gym_record_video: true
 # Pytorch
 epochs: 35
 # Game data

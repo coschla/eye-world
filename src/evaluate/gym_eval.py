@@ -22,6 +22,30 @@ _DUMMY_GAZE = [(0, 0)]
 _DUMMY_ACTION = 0
 
 
+# =========================================================
+# Config-derived settings
+# =========================================================
+
+
+def env_id_from_config(config: dict) -> str:
+    """
+    Gym env id for config["games"][0].
+
+    Dataset game names are snake_case and the ALE v5 ids are CamelCase of
+    the same words, e.g. space_invaders -> ALE/SpaceInvaders-v5 and
+    ms_pacman -> ALE/MsPacman-v5.
+    """
+    game = config["games"][0]
+    camel = "".join(word.capitalize() for word in game.split("_"))
+
+    return f"ALE/{camel}-v5"
+
+
+def expected_channels(config: dict) -> int:
+    """Channels of the stacked state: stack_length frames, 1 or 3 channels each."""
+    return int(config["stack_length"]) * (1 if config.get("grey_scale", True) else 3)
+
+
 class RuntimePreprocessor:
     """
     Wraps the caller's own preprocessing pipeline instance.
@@ -113,14 +137,22 @@ class RuntimeActionNet:
         # full_action_space=True
         # -----------------------------------------------------
 
-        if action_space.n != 18:
+        self.num_actions = int(config["num_actions"])
+
+        if self.num_actions != len(ALE_ACTION_NAMES):
             raise RuntimeError(
-                "Expected the full 18-action ALE space, "
+                f"config num_actions={self.num_actions} but the full ALE "
+                f"action space has {len(ALE_ACTION_NAMES)} actions."
+            )
+
+        if action_space.n != self.num_actions:
+            raise RuntimeError(
+                f"Expected the full {self.num_actions}-action ALE space, "
                 f"but Gym reports {action_space.n}. "
                 "Create the env with full_action_space=True."
             )
 
-        self.num_actions = int(action_space.n)
+        self.expected_channels = expected_channels(config)
 
         # -----------------------------------------------------
         # Legal action mask
@@ -305,7 +337,8 @@ class RuntimeActionNet:
         )
 
         # -----------------------------------------------------
-        # Four RGB frames stacked along channel dimension
+        # stack_length frames stacked along the channel dimension
+        # (config-derived), e.g. 4 RGB frames:
         #
         # [12, 84, 84]
         #
@@ -319,13 +352,14 @@ class RuntimeActionNet:
 
         if state.ndim != 4:
             raise ValueError(
-                f"ActionNet expected [batch, 12, H, W], got {tuple(state.shape)}"
+                f"ActionNet expected [batch, {self.expected_channels}, H, W], "
+                f"got {tuple(state.shape)}"
             )
 
-        if state.shape[1] != 12:
+        if state.shape[1] != self.expected_channels:
             raise ValueError(
-                "ActionNet expected four RGB frames "
-                "(12 channels), "
+                f"ActionNet expected {self.expected_channels} channels "
+                "(config stack_length x channels per frame), "
                 f"got {tuple(state.shape)}"
             )
 
@@ -463,12 +497,18 @@ class GymManager:
         config,
         preprocessor_pipeline,
         action_net,
-        env_name: str = "ALE/SpaceInvaders-v5",
+        env_name: str | None = None,
         record_video: bool = False,
         video_folder: str = "videos/action_classifier",
         episode_trigger=lambda episode_id: True,
         action_history_length: int = 0,  # NEW
     ):
+
+        # An explicit env_name overrides; otherwise follow config["games"].
+        if env_name is None:
+            env_name = env_id_from_config(config)
+
+        print("Gym environment:", env_name)
 
         # =====================================================
         # Create Gym environment

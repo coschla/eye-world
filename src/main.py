@@ -15,6 +15,7 @@ from dataset.torch_dataset import get_torch_dataloaders
 from dataset.utils import compute_action_class_weights, get_train_test_files
 from evaluate.gym_eval import GymManager, evaluate_policy
 from evaluate.utils import ALE_ACTION_NAMES
+from models.action_jepa_history import ActionNet as JEPAActionNet
 from models.action_net import ActionNet
 from models.networks import ConvNet, UNet
 from models.vjepa import (
@@ -27,6 +28,7 @@ from models.vjepa import (
 from trainers.action_classifier import ActionTraining
 from trainers.gaze_predict import GazeTraining
 from trainers.jepa import VJEPA, ActionConditionVJEPA
+from trainers.jepa_action import ActionHistoryTraining
 from trainers.jepa_rollout import RolloutActionJEPA
 from utils import InterleavedDataset, skip_run
 
@@ -485,9 +487,7 @@ with skip_run("skip", "action_classifier_in_gym_recording") as check, check():
             ]
         ),
         action_net=ActionNet(num_actions=int(config["num_actions"])),
-        # env_name="ALE/SpaceInvaders-v5",
-        env_name="ALE/Pacman-v5",
-        record_video=True,
+        record_video=bool(runtime_config["gym_record_video"]),
         video_folder="./video/action_classifier",
         episode_trigger=lambda episode_id: episode_id == 0,
     )
@@ -499,19 +499,7 @@ with skip_run("skip", "action_classifier_in_gym_recording") as check, check():
     )
 
 
-# from models.action_jepa_history import ActionNet
-
-# from models.action_net import ActionNet
-from models.action_jepa_history import ActionNet
-from trainers.jepa_action import ActionHistoryTraining
-
-with (
-    skip_run(
-        "skip",
-        "train_action_history_classifier",
-    ) as check,
-    check(),
-):
+with skip_run("skip", "train_action_history_classifier") as check, check():
     game = config["games"]
 
     games_name = "_".join(game)
@@ -592,10 +580,12 @@ with (
     # Action-conditioned JEPA classifier
     # ---------------------------------------------------------
 
-    action_network = ActionNet(
+    action_network = JEPAActionNet(
         num_actions=num_actions,
         config=config,
-        jepa_checkpoint=None,  # config["jepa_checkpoint"],
+        # Must be the pretrained encoder: with None the tubelet embedding
+        # and student stay at random init and are then frozen.
+        jepa_checkpoint=config["ckpt_path"],
         # First experiment:
         #
         # pretrained JEPA stays fixed
@@ -673,9 +663,11 @@ with (
     # ---------------------------------------------------------
 
     if data_loaders.get("test") is not None:
+        # "best" = the val_loss checkpoint, the same one the gym eval loads.
         trainer.test(
             training_model,
             dataloaders=data_loaders["test"],
+            ckpt_path="best",
         )
 
     print("\nTraining complete")
@@ -686,20 +678,8 @@ with (
     )
 
 
-from models.action_jepa_history import ActionNet as JEPAActionNet
-
-with (
-    skip_run(
-        "run",
-        "action_history_classifier_in_gym_recording",
-    ) as check,
-    check(),
-):
+with skip_run("run", "history_classifier_gym") as check, check():
     runtime_config = dict(config)
-
-    runtime_config["action_classifier_checkpoint"] = (
-        "/home/cody/Documents/IHL/eye-world/checkpoints/action_classifier/space_invaders-action-history-jepa-best.ckpt"
-    )
 
     manager = GymManager(
         config=runtime_config,
@@ -712,12 +692,13 @@ with (
         action_net=JEPAActionNet(
             num_actions=int(runtime_config["num_actions"]),
             config=runtime_config,
+            # Encoder weights come from the classifier checkpoint that
+            # RuntimeActionNet loads (strict) from action_classifier_checkpoint.
             jepa_checkpoint=None,
             freeze_tubelet=True,
             freeze_student=True,
         ),
-        env_name="ALE/SpaceInvaders-v5",
-        record_video=True,
+        record_video=bool(runtime_config["gym_record_video"]),
         video_folder="./video/action_history_classifier",
         episode_trigger=lambda episode_id: episode_id == 0,
         action_history_length=3,
