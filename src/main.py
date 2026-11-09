@@ -126,7 +126,7 @@ with skip_run("skip", "gaze_prediction_conv_deconv") as check, check():
     trainer.fit(model)
 
 
-with skip_run("run", "jepa_training_multi_game") as check, check():
+with skip_run("skip", "jepa_training_multi_game") as check, check():
     logger = TensorBoardLogger(
         "tb_logs",
         name="multi_game/vjepa_world_model/",
@@ -569,8 +569,8 @@ with skip_run("skip", "train_action_history_classifier") as check, check():
         # pretrained JEPA stays fixed
         # action-history token learns
         # classifier learns
-        freeze_tubelet=True,
-        freeze_student=True,
+        freeze_tubelet=False,
+        freeze_student=False,
     )
 
     # Lightning module

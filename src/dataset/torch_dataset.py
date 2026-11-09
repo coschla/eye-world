@@ -49,6 +49,63 @@ def get_torch_dataloaders(game, config, preprocessor=None):
 
     train_files = []
     test_files = []
+    val_files = []
+
+    val_needed = config.get("val_needed", False)
+
+    for current_game in games:
+        game_train_files, game_test_files = get_train_test_files(
+            current_game,
+            config,
+        )
+
+        train_files.extend(game_train_files)
+        test_files.extend(game_test_files)
+
+        # Optional validation subjects
+        if val_needed:
+            val_config = {
+                **config,
+                "train_sub": config["val_sub"],
+            }
+
+            game_val_files, _ = get_train_test_files(
+                current_game,
+                val_config,
+            )
+
+            val_files.extend(game_val_files)
+
+    loaders = {
+        "train": create_dataloader(
+            train_files,
+            config,
+            preprocessor,
+        ),
+        "test": create_dataloader(
+            test_files,
+            config,
+            preprocessor,
+        ),
+    }
+
+    if val_needed:
+        loaders["val"] = create_dataloader(
+            val_files,
+            config,
+            preprocessor,
+        )
+
+    return loaders
+
+
+"""
+def get_torch_dataloaders(game, config, preprocessor=None):
+
+    games = game if isinstance(game, (list, tuple, set)) else [game]
+
+    train_files = []
+    test_files = []
 
     for current_game in games:
         game_train_files, game_test_files = get_train_test_files(
@@ -70,4 +127,4 @@ def get_torch_dataloaders(game, config, preprocessor=None):
             config,
             preprocessor,
         ),
-    }
+    }"""

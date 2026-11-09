@@ -297,16 +297,83 @@ class ActionHistoryTraining(pl.LightningModule):
 
         accuracy = (predicted_actions == targets).float().mean()
 
-        # -----------------------------------------------------
-        # Logging
-        # -----------------------------------------------------
+        # ============================================================
+        # Validation accuracy using the SAME action selection as Gym
+        # ============================================================
 
+        if stage == "val":
+            # Space Invaders legal ALE action IDs
+            legal_action_ids = [0, 1, 3, 4, 11, 12]
+
+            # Mask illegal actions exactly as Gym does
+            legal_logits = torch.full_like(
+                logits,
+                float("-inf"),
+            )
+
+            legal_logits[:, legal_action_ids] = logits[:, legal_action_ids]
+
+            # Select highest-scoring legal action
+            legal_predictions = legal_logits.argmax(dim=-1)
+
+            # Identify targets that are legal in Space Invaders
+            legal_targets = torch.isin(
+                targets,
+                torch.tensor(
+                    legal_action_ids,
+                    device=targets.device,
+                ),
+            )
+
+            # Track the proportion of validation targets that are legal
+            self.log(
+                "val_legal_target_fraction",
+                legal_targets.float().mean(),
+                on_step=False,
+                on_epoch=True,
+                batch_size=targets.numel(),
+            )
+
+            # Compare predictions against legal targets
+            if legal_targets.any():
+                legal_accuracy = (
+                    (legal_predictions[legal_targets] == targets[legal_targets])
+                    .float()
+                    .mean()
+                )
+
+                self.log(
+                    "val_legal_accuracy",
+                    legal_accuracy,
+                    on_step=False,
+                    on_epoch=True,
+                    prog_bar=True,
+                    batch_size=int(legal_targets.sum().item()),
+                )
+                self.log(
+                    f"{stage}_loss",
+                    loss,
+                    on_step=stage == "train",
+                    on_epoch=True,
+                    prog_bar=True,
+                )
+
+                self.log(
+                    f"{stage}_accuracy",
+                    accuracy,
+                    on_step=False,
+                    on_epoch=True,
+                    prog_bar=True,
+                )
+
+        # Log metrics for ALL stages
         self.log(
             f"{stage}_loss",
             loss,
-            on_step=stage == "train",
+            on_step=(stage == "train"),
             on_epoch=True,
             prog_bar=True,
+            batch_size=targets.numel(),
         )
 
         self.log(
@@ -315,6 +382,25 @@ class ActionHistoryTraining(pl.LightningModule):
             on_step=False,
             on_epoch=True,
             prog_bar=True,
+            batch_size=targets.numel(),
+        )
+
+        # How often does the model predict NOOP?
+        self.log(
+            f"{stage}_pred_noop_fraction",
+            (predicted_actions == 0).float().mean(),
+            on_step=False,
+            on_epoch=True,
+            batch_size=targets.numel(),
+        )
+
+        # How often is the correct answer NOOP?
+        self.log(
+            f"{stage}_target_noop_fraction",
+            (targets == 0).float().mean(),
+            on_step=False,
+            on_epoch=True,
+            batch_size=targets.numel(),
         )
 
         return loss

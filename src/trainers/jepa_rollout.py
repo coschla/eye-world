@@ -116,6 +116,7 @@ class RolloutActionJEPA(pl.LightningModule):
         # leads to the next window. If it is recorded the other way round, use
         # actions[:, ctx - 2 : ctx - 2 + K].
         # The action recorded with the newest frame of window j.
+        # my first implemention was correct
         a = actions[:, ctx - 1 : ctx - 1 + K].long()
 
         return z, a
