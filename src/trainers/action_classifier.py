@@ -93,29 +93,6 @@ class ActionTraining(pl.LightningModule):
 
         return loss
 
-    """def _shared_step(self, batch, stage: str) -> torch.Tensor:
-        images, _, actions = batch
-
-        images = images.float()
-
-        if images.ndim == 5:
-            images = images.squeeze(2)
-        targets = atari_to_gym(torch.as_tensor(actions).squeeze(-1)).long()
-
-        logits = self.net(images)
-
-        loss = self.criterion(
-            logits.reshape(-1, 9),
-            targets.reshape(-1),
-        )
-
-        predicted_actions = logits.argmax(dim=2)
-        accuracy = (predicted_actions == targets).float().mean()
-
-        self.log(f"{stage}_loss", loss, on_step=stage == "train", on_epoch=True, prog_bar=True)
-        self.log(f"{stage}_accuracy", accuracy, on_epoch=True, prog_bar=True)
-
-        return loss"""
 
     def training_step(self, batch, batch_idx):
         return self._shared_step(batch, "train")

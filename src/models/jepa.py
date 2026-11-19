@@ -8,9 +8,9 @@ DEBUG = False  # set True for debugging
 
 
 # -------------------------------------------------
-# VJEPA Encoder — inference model (tubelet embed + student)
+# JEPA Encoder — inference model (tubelet embed + student)
 # -------------------------------------------------
-class VJEPAEncoder(nn.Module):
+class JEPAEncoder(nn.Module):
     def __init__(self, tubelet_embed, student):
         super().__init__()
         self.tubelet_embed = tubelet_embed
@@ -24,6 +24,22 @@ class VJEPAEncoder(nn.Module):
         x = video.unsqueeze(2)  # [B, T, 1, H, W]
         tokens = self.tubelet_embed(x)  # [B, N, D]
         return self.student(tokens)  # [B, N, D]
+
+
+def encoder_frames(images, num_frames, grey=True):
+    """
+    Stacked frames [B, T*C, H, W] (C = 1 or 3) -> [B, T, C', H, W] for the tubelet
+    embedding. RGB is converted to luminance when grey, so pretraining, the
+    classifier and the gym all feed the encoder the same tokens.
+    """
+    B, CT, H, W = images.shape
+    frames = images.reshape(B, num_frames, CT // num_frames, H, W)
+
+    if grey and frames.size(2) == 3:
+        red, green, blue = frames[:, :, 0], frames[:, :, 1], frames[:, :, 2]
+        frames = (0.299 * red + 0.587 * green + 0.114 * blue).unsqueeze(2)
+
+    return frames
 
 
 # -------------------------------------------------
@@ -162,23 +178,3 @@ class ActionOneHot(nn.Module):
 
     def forward(self, action):
         return F.one_hot(action.long(), num_classes=self.num_actions).float()
-
-
-class ActionEmbedding(nn.Module):
-    def __init__(self, num_actions=18, token_dim=768):
-        super().__init__()
-
-        self.expand = ActionOneHot(num_actions)
-
-        self.mlp = nn.Sequential(
-            nn.Linear(num_actions, 128),
-            nn.ReLU(),
-            nn.Linear(128, 512),
-            nn.ReLU(),
-            nn.Linear(512, token_dim),
-        )
-
-    def forward(self, action):
-        one_hot = self.expand(action)  # [B,18] or [B,T,18]
-        token = self.mlp(one_hot)  # [B,token_dim] or [B,T,token_dim]
-        return token

@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from models.vjepa import TransformerEncoder, TubeletEmbedding
+from models.jepa import TransformerEncoder, TubeletEmbedding
 
 # ================================================================
 # Three-action history embedding

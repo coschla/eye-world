@@ -17,22 +17,21 @@ from dataset.utils import (
     get_train_test_files,
     get_train_val_test_files,
 )
+from evaluate.encoder_check import check_encoder
 from evaluate.gym_eval import GymManager, evaluate_policy
 from evaluate.utils import ALE_ACTION_NAMES
-from evaluate.world_model_eval import evaluate_world_model, load_world_model
 from models.action_jepa_history import ActionNet as JEPAActionNet
 from models.action_net import ACPredictor, ActionNet
 from models.networks import ConvNet, UNet
-from models.vjepa import (
-    ActionEmbedding,
+from models.jepa import (
     Predictor,
     TransformerEncoder,
     TubeletEmbedding,
-    VJEPAEncoder,
+    JEPAEncoder,
 )
 from trainers.action_classifier import ActionTraining
 from trainers.gaze_predict import GazeTraining
-from trainers.jepa import VJEPA, ActionConditionVJEPA
+from trainers.jepa import JEPA
 from trainers.jepa_action import ActionHistoryTraining
 from trainers.jepa_rollout import RolloutActionJEPA, load_encoder_weights
 from utils import InterleavedDataset, skip_run
@@ -41,7 +40,6 @@ from utils import InterleavedDataset, skip_run
 config_path = "configs/config.yaml"
 config = yaml.load(open(str(config_path)), Loader=yaml.SafeLoader)
 
-CHECKPOINT_DIR = Path(config["action_classifier_checkpoint_dir"])
 LOG_DIR = config["log_dir"]
 VIDEO_DIR = Path(config["video_dir"])
 
@@ -206,7 +204,7 @@ with skip_run("skip", "jepa_training_multi_game") as check, check():
         mlp_dim=mlp_dim,
     )
 
-    net = VJEPAEncoder(
+    net = JEPAEncoder(
         tubelet_embed=tubelet_embed,
         student=student,
     )
@@ -218,7 +216,7 @@ with skip_run("skip", "jepa_training_multi_game") as check, check():
         mlp_dim=mlp_dim,
     )
 
-    model = VJEPA(
+    model = JEPA(
         model=net,
         pred=pred,
         config=config,
@@ -231,7 +229,7 @@ with skip_run("skip", "jepa_training_multi_game") as check, check():
     trainer = pl.Trainer(
         logger=logger,
         max_epochs=config["epochs"],
-        accelerator="auto",
+        accelerator="gpu",
         devices="auto",
         precision="bf16-mixed",
         log_every_n_steps=10,
@@ -241,55 +239,21 @@ with skip_run("skip", "jepa_training_multi_game") as check, check():
     trainer.fit(model, train_loader)
 
 
-with skip_run("skip", "jepa_trainers") as check, check():
-    game = config["games"][0]
-    logger = TensorBoardLogger(LOG_DIR, name=f"{game}/vjepa_action_world_model/")
+with skip_run("skip", "encoder_check") as check, check():
+    # Do the frozen encoder's latents vary with the frame? (see evaluate/encoder_check.py)
+    ac_config = {**config, "stack_length": int(config["context_frames"]) + 4}
+    preprocessor = ComposePreprocessor([Resize(ac_config), StackWithLabels(ac_config)])
+    dataloaders = get_torch_dataloaders(config["games"][0], ac_config, preprocessor)
 
-    # Action-conditioned model needs context + teacher frames per sample.
-    # stack_length is 4 in the shared config (pretraining), so override it here.
-    wm_config = {
-        **config,
-        "stack_length": 2 * int(config["context_frames"]),
-    }
-    preprocessor = ComposePreprocessor([Resize(wm_config), StackWithLabels(wm_config)])
-    dataloaders = get_torch_dataloaders(game, wm_config, preprocessor=preprocessor)
+    tubelet_embed = TubeletEmbedding(config, 1 if config.get("grey_scale", True) else 3, 768, config.get("size_x", 84))
+    net = JEPAEncoder(tubelet_embed, TransformerEncoder(768, depth=12, heads=12, mlp_dim=3072))
 
-    patch_dim = 1 if config.get("grey_scale_v", True) else 3
-    embed_dim = 768  # 1024
-    heads = 12
-    mlp_dim = 3072  # 2048
-
-    tubelet_embed = TubeletEmbedding(
-        config=wm_config,
-        patch_dim=patch_dim,
-        embed_dim=embed_dim,
-        img_size=config.get("size_x", 84),
-    )
-    student = TransformerEncoder(embed_dim, depth=12, heads=heads, mlp_dim=mlp_dim)
-    net = VJEPAEncoder(tubelet_embed=tubelet_embed, student=student)
-    action_embed = ActionEmbedding()
-    model = ActionConditionVJEPA(
-        model=net,
-        action_embed=action_embed,
-        config=wm_config,
-        lr=1e-4,
-        ema_decay=0.996,
-    )
-
-    trainer = pl.Trainer(
-        logger=logger,
-        strategy=DDPStrategy(find_unused_parameters=True),
-        accelerator="auto",  # replaces 'gpus'
-        devices=1,  # replaces 'gpus=2'
-        max_epochs=config["epochs"],
-        precision="bf16-mixed",
-        log_every_n_steps=10,
-    )
-
-    trainer.fit(model, dataloaders["train"])
+    config["jepa_checkpoint"] = 'tb_logs/multi_game/vjepa_world_model/version_0/checkpoints/epoch=14-step=21645.ckpt'
+    load_encoder_weights(net, config["jepa_checkpoint"])
+    check_encoder(net, dataloaders["test"], ac_config)
 
 
-with skip_run("run", "train_action_classifier") as check, check():
+with skip_run("skip", "train_action_classifier") as check, check():
     game = config["games"]
     config['epochs'] = 20
     games_name = "_".join(game)
@@ -301,25 +265,26 @@ with skip_run("run", "train_action_classifier") as check, check():
 
     train_files = [f for g in game for f in get_train_val_test_files(g, config)[0]]
     class_weights = compute_action_class_weights(
-        train_files, num_actions, config.get("class_weight_max_ratio")
+        train_files,
+        num_actions,
+        config.get("class_weight_max_ratio"),
+        int(config["class_weight_min_count"]),
     )
     for a, w in enumerate(class_weights.tolist()):
         print(a, ALE_ACTION_NAMES[a], f"{w:.3f}")
 
     freeze = bool(config["freeze_encoder"])
-    config["action_init_checkpoint"] = 'tb_logs/breakout/vjepa_action_world_model/version_2/checkpoints/epoch=34-step=50505.ckpt'
+    config["jepa_checkpoint"] = 'tb_logs/multi_game/vjepa_world_model/version_0/checkpoints/epoch=14-step=21645.ckpt'
     action_network = JEPAActionNet(
         num_actions=num_actions,
         config=config,
-        jepa_checkpoint=config["action_init_checkpoint"],
+        jepa_checkpoint=config["jepa_checkpoint"],
         freeze_tubelet=freeze,
         freeze_student=freeze,
     )
     training_model = ActionHistoryTraining(config, action_network, data_loaders, class_weights)
 
-    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
     checkpoint_callback = ModelCheckpoint(
-        dirpath=CHECKPOINT_DIR,
         filename=f"{games_name}-action-jepa-best",
         monitor="val_loss",
         mode="min",
@@ -341,30 +306,8 @@ with skip_run("run", "train_action_classifier") as check, check():
     print("Best checkpoint:", checkpoint_callback.best_model_path)
 
 
-with skip_run("skip", "jepa_trainers_eval") as check, check():
-    game = config["games"][0]
-    wm_config = {**config, "stack_length": 2 * int(config["context_frames"])}
-    preprocessor = ComposePreprocessor([Resize(wm_config), StackWithLabels(wm_config)])
-    dataloaders = get_torch_dataloaders(game, wm_config, preprocessor=preprocessor)
-
-    patch_dim = 1 if config.get("grey_scale_v", True) else 3
-    tubelet_embed = TubeletEmbedding(
-        config=wm_config,
-        patch_dim=patch_dim,
-        embed_dim=768,
-        img_size=config.get("size_x", 84),
-    )
-    student = TransformerEncoder(768, depth=12, heads=12, mlp_dim=3072)
-    net = VJEPAEncoder(tubelet_embed=tubelet_embed, student=student)
-    model = ActionConditionVJEPA(
-        model=net, action_embed=ActionEmbedding(), config=wm_config
-    )
-    config["world_model_checkpoint"] = "tb_logs/breakout/vjepa_action_world_model/version_2/checkpoints/epoch=34-step=50505.ckpt"
-    load_world_model(model, config["world_model_checkpoint"])
-    evaluate_world_model(model, dataloaders["test"], wm_config)
-
-
-with skip_run("skip", "history_classifier_gym") as check, check():
+with skip_run("run", "evaluate_action_model") as check, check():
+    config["action_classifier_checkpoint"] = "tb_logs/breakout/action_jepa_classifier/version_2/checkpoints/breakout-action-jepa-best.ckpt"
     runtime_config = dict(config)
 
     manager = GymManager(
@@ -411,7 +354,7 @@ with skip_run("skip", "jepa_rollout_with_validation") as check, check():
     dataloaders = get_torch_dataloaders(game, ac_config, preprocessor=preprocessor)
 
     # MODEL: frozen pretrained encoder + action-conditioned predictor
-    patch_dim = 1 if config.get("grey_scale_v", True) else 3
+    patch_dim = 1 if config.get("grey_scale", True) else 3
     embed_dim = 768
     heads = 12
     mlp_dim = 3072
@@ -425,10 +368,10 @@ with skip_run("skip", "jepa_rollout_with_validation") as check, check():
 
     student = TransformerEncoder(embed_dim, depth=12, heads=heads, mlp_dim=mlp_dim)
 
-    net = VJEPAEncoder(tubelet_embed=tubelet_embed, student=student)
+    net = JEPAEncoder(tubelet_embed=tubelet_embed, student=student)
 
-    # Pretrained VJEPA tubelet embedding + student (raises if the file is missing).
-    load_encoder_weights(net, config["ckpt_path"])
+    # Pretrained JEPA tubelet embedding + student (raises if the file is missing).
+    load_encoder_weights(net, config["jepa_checkpoint"])
 
     predictor = ACPredictor(
         embed_dim=embed_dim,
@@ -519,13 +462,7 @@ with skip_run("skip", "train_action_classifier") as check, check():
         class_weights=class_weights,
     )
 
-    CHECKPOINT_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
     checkpoint_callback = ModelCheckpoint(
-        dirpath=CHECKPOINT_DIR,
         filename=f"{games_name}-action-classifier-best-curent-test",
         monitor="val_loss",
         mode="min",

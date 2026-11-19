@@ -134,3 +134,6 @@ checkpoints/*
 
 # macOS
 .DS_Store
+
+# Gym evaluation recordings
+video/

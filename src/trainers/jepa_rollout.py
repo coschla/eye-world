@@ -5,13 +5,13 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from trainers.utils import format_batch_for_vjepa
+from trainers.utils import format_batch_for_jepa
 
 
 def load_encoder_weights(encoder, checkpoint_path):
     """
-    Load the pretrained V-JEPA tubelet embedding and student into a
-    VJEPAEncoder from a Lightning checkpoint of trainers.jepa.VJEPA.
+    Load the pretrained JEPA tubelet embedding and student into a
+    JEPAEncoder from a Lightning checkpoint of trainers.jepa.JEPA.
     """
     checkpoint_path = Path(checkpoint_path)
 
@@ -43,7 +43,7 @@ def _normalize(x):
 # -----------------------------
 class RolloutActionJEPA(pl.LightningModule):
     """
-    Action-conditioned world model on top of a frozen V-JEPA encoder
+    Action-conditioned world model on top of a frozen JEPA encoder
     (V-JEPA 2-AC style).
 
     State at step j = latent of the context_frames-frame window ending at
@@ -90,7 +90,7 @@ class RolloutActionJEPA(pl.LightningModule):
             z: [B, K + 1, N, D] layer-normed latent of every window
             a: [B, K]           raw ALE action taken in windows 0..K-1
         """
-        img, actions, _ = format_batch_for_vjepa(batch, self.config)
+        img, actions, _ = format_batch_for_jepa(batch, self.config)
 
         ctx, K = self.context_frames, self.num_steps
 

@@ -1,10 +1,9 @@
 from pathlib import Path
 
 import torch
-import torch.nn.functional as F
 from torch import nn
 
-from models.vjepa import TransformerEncoder, TubeletEmbedding
+from models.jepa import TransformerEncoder, TubeletEmbedding, encoder_frames
 
 # ================================================================
 # JEPA action classifier (frames only, no action history)
@@ -37,7 +36,7 @@ class ActionNet(nn.Module):
 
     Expected image input from the existing classifier pipeline:
 
-        [B, 12, 84, 84]
+        [B, 4, 84, 84]
 
     representing:
 
@@ -83,12 +82,7 @@ class ActionNet(nn.Module):
         # JEPA input configuration
         # =====================================================
 
-        self.grey_scale = bool(
-            config.get(
-                "grey_scale_v",
-                True,
-            )
-        )
+        self.grey_scale = bool(config.get("grey_scale", True))
 
         patch_dim = 1 if self.grey_scale else 3
 
@@ -361,94 +355,12 @@ class ActionNet(nn.Module):
     # Convert existing classifier images into JEPA format
     # =========================================================
 
-    def _prepare_frames(
-        self,
-        images: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        Input:
-            [B, 12, H, W]
-
-        Output if grayscale JEPA:
-            [B, 4, 1, H, W]
-
-        Output if RGB JEPA:
-            [B, 4, 3, H, W]
-        """
-
+    def _prepare_frames(self, images: torch.Tensor) -> torch.Tensor:
+        """[B, 4*C, H, W] stacked frames -> [B, 4, C, H, W]; C is 1 when grey_scale."""
         if images.ndim != 4:
-            raise ValueError(
-                f"ActionNet expected images [B,12,H,W], got {tuple(images.shape)}"
-            )
+            raise ValueError(f"ActionNet expected images [B,4*C,H,W], got {tuple(images.shape)}")
 
-        (
-            batch_size,
-            channels,
-            height,
-            width,
-        ) = images.shape
-
-        if channels != 12:
-            raise ValueError(
-                "Expected four stacked RGB frames "
-                "= 12 channels, "
-                f"got {tuple(images.shape)}"
-            )
-
-        # -----------------------------------------------------
-        # [B, 12, H, W]
-        #
-        # ->
-        #
-        # [B, 4, 3, H, W]
-        # -----------------------------------------------------
-
-        frames = images.reshape(
-            batch_size,
-            4,
-            3,
-            height,
-            width,
-        )
-
-        # -----------------------------------------------------
-        # RGB -> grayscale if JEPA expects one channel
-        #
-        # [B,4,3,H,W]
-        #
-        # ->
-        #
-        # [B,4,1,H,W]
-        # -----------------------------------------------------
-
-        if self.grey_scale:
-            red = frames[
-                :,
-                :,
-                0:1,
-                :,
-                :,
-            ]
-
-            green = frames[
-                :,
-                :,
-                1:2,
-                :,
-                :,
-            ]
-
-            blue = frames[
-                :,
-                :,
-                2:3,
-                :,
-                :,
-            ]
-
-            frames = 0.299 * red + 0.587 * green + 0.114 * blue
-
-        return frames
+        return encoder_frames(images, 4, self.grey_scale)
 
     # =========================================================
     # Forward

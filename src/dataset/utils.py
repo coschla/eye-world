@@ -59,6 +59,7 @@ def compute_action_class_weights(
     files,
     num_classes: int = 18,
     max_ratio: float | None = None,
+    min_count: int = 1,
 ) -> torch.Tensor:
     """
     Inverse-frequency CrossEntropyLoss weights over the full 18-way ALE
@@ -85,7 +86,8 @@ def compute_action_class_weights(
         counts[raw_action] += 1
 
     present = counts > 0
-    weights = counts.sum() / (present.sum() * counts.clamp(min=1))
+    # min_count: a class with fewer samples is weighted as if it had min_count
+    weights = counts.sum() / (present.sum() * counts.clamp(min=max(min_count, 1)))
     weights[~present] = 0.0  # actions this game never uses never appear as targets
 
     if max_ratio is not None:

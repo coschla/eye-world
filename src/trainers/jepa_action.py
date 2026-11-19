@@ -59,6 +59,8 @@ class ActionHistoryTraining(pl.LightningModule):
 
         self._confusion = {}
 
+        self._extra = {}
+
         self.save_hyperparameters(
             {
                 "learning_rate": self.learning_rate,
@@ -116,7 +118,7 @@ class ActionHistoryTraining(pl.LightningModule):
 
         if images.ndim != 4:
             raise ValueError(
-                f"Expected classifier images [B,12,H,W], got {tuple(images.shape)}"
+                f"Expected classifier images [B,T*C,H,W], got {tuple(images.shape)}"
             )
 
         # -----------------------------------------------------
@@ -276,6 +278,18 @@ class ActionHistoryTraining(pl.LightningModule):
                 .float()
             )
 
+            # The previous action is used for this metric only, never as model input.
+            last = actions[:, -2].long()
+            changed = targets != last
+            self._extra[stage] = self._extra.get(stage, 0) + torch.stack(
+                [
+                    torch.tensor(len(targets), device=targets.device),
+                    changed.sum(),
+                    ((predicted_actions == targets) & changed).sum(),
+                    (last == targets).sum(),
+                ]
+            ).float().cpu()
+
         return loss
 
     def _report(self, stage: str) -> None:
@@ -292,12 +306,21 @@ class ActionHistoryTraining(pl.LightningModule):
         majority = (support.max() / support.sum()).item()
         accuracy = (confusion.diag().sum() / support.sum()).item()
 
+        n, changed, changed_correct, repeat = self._extra.pop(stage)
+        change_acc = (changed_correct / changed.clamp(min=1)).item()
+        repeat_acc = (repeat / n).item()
+
         self.log(f"{stage}_balanced_accuracy", balanced)
         self.log(f"{stage}_majority_baseline", majority)
+        self.log(f"{stage}_change_accuracy", change_acc)
+        self.log(f"{stage}_repeat_last_baseline", repeat_acc)
 
         if stage == "test":
             print(f"\nTEST accuracy {accuracy:.3f} | balanced {balanced:.3f} | "
-                  f"majority-class baseline {majority:.3f}")
+                  f"majority-class baseline {majority:.3f} | "
+                  f"repeat-last baseline {repeat_acc:.3f}")
+            print(f"accuracy where the action changes ({int(changed)} of {int(n)} "
+                  f"samples): {change_acc:.3f}")
             for action in torch.nonzero(present).flatten().tolist():
                 print(f"  action {action:2d}: recall {recall[action]:.3f} "
                       f"(n={int(support[action])})")
