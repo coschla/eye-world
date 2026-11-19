@@ -7,158 +7,7 @@ from torch import nn
 from models.vjepa import TransformerEncoder, TubeletEmbedding
 
 # ================================================================
-# Previous-three-action embedding
-# ================================================================
-
-
-class ActionHistoryEmbedding(nn.Module):
-    """
-    Converts the previous 3 ALE actions into ONE token that has the
-    same dimensionality as a JEPA visual tubelet.
-
-    Input:
-        previous_actions: [B, 3]
-
-    Processing:
-        [B, 3]
-            ->
-        one-hot [B, 3, 18]
-            ->
-        flatten [B, 54]
-            ->
-        MLP
-            ->
-        [B, 768]
-            ->
-        [B, 1, 768]
-
-    The order of the three actions is preserved because the three
-    one-hot vectors are concatenated before the MLP.
-    """
-
-    def __init__(
-        self,
-        num_actions: int = 18,
-        history_length: int = 3,
-        token_dim: int = 768,
-    ):
-        super().__init__()
-
-        self.num_actions = int(num_actions)
-        self.history_length = int(history_length)
-        self.token_dim = int(token_dim)
-
-        input_dim = self.num_actions * self.history_length
-
-        self.mlp = nn.Sequential(
-            nn.Linear(
-                input_dim,
-                128,
-            ),
-            nn.ReLU(),
-            nn.Linear(
-                128,
-                512,
-            ),
-            nn.ReLU(),
-            nn.Linear(
-                512,
-                self.token_dim,
-            ),
-        )
-
-    def forward(
-        self,
-        previous_actions: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        previous_actions:
-            [B, 3]
-
-        returns:
-            [B, 1, 768]
-        """
-
-        if previous_actions.ndim != 2:
-            raise ValueError(
-                "ActionHistoryEmbedding expected "
-                "[B, 3], "
-                f"got {tuple(previous_actions.shape)}"
-            )
-
-        if previous_actions.shape[1] != self.history_length:
-            raise ValueError(
-                f"Expected {self.history_length} previous actions, "
-                f"got {tuple(previous_actions.shape)}"
-            )
-
-        previous_actions = previous_actions.long()
-
-        # -----------------------------------------------------
-        # Sanity check action IDs
-        # -----------------------------------------------------
-
-        if torch.any(previous_actions < 0):
-            raise ValueError("Previous actions contain negative action IDs.")
-
-        if torch.any(previous_actions >= self.num_actions):
-            raise ValueError(
-                f"Previous actions contain IDs outside 0-{self.num_actions - 1}."
-            )
-
-        # -----------------------------------------------------
-        # [B, 3]
-        #
-        # ->
-        #
-        # [B, 3, 18]
-        # -----------------------------------------------------
-
-        one_hot = F.one_hot(
-            previous_actions,
-            num_classes=self.num_actions,
-        ).float()
-
-        # -----------------------------------------------------
-        # [B, 3, 18]
-        #
-        # ->
-        #
-        # [B, 54]
-        #
-        # Action order is preserved.
-        # -----------------------------------------------------
-
-        one_hot = one_hot.reshape(
-            previous_actions.shape[0],
-            self.history_length * self.num_actions,
-        )
-
-        # -----------------------------------------------------
-        # [B, 54]
-        #
-        # ->
-        #
-        # [B, 768]
-        # -----------------------------------------------------
-
-        action_token = self.mlp(one_hot)
-
-        # -----------------------------------------------------
-        # [B, 768]
-        #
-        # ->
-        #
-        # [B, 1, 768]
-        # -----------------------------------------------------
-
-        action_token = action_token.unsqueeze(1)
-
-        return action_token
-
-
-# ================================================================
-# Action-conditioned JEPA action classifier
+# JEPA action classifier (frames only, no action history)
 # ================================================================
 
 
@@ -166,20 +15,18 @@ class ActionNet(nn.Module):
     """
     Action classifier using:
 
-        16 visual JEPA tubelets
-            +
-        1 previous-three-actions token
+        16 visual JEPA tubelets (no action history)
 
     Student input:
-        [B, 17, 768]
+        [B, 16, 768]
 
     Student output:
-        [B, 17, 768]
+        [B, 16, 768]
 
     Then:
         flatten
             ->
-        [B, 13056]
+        [B, 12288]
             ->
         fully-connected action classifier
             ->
@@ -216,21 +63,13 @@ class ActionNet(nn.Module):
         self.num_predictions = 1
 
         self.num_visual_tokens = 16
-        self.num_action_tokens = 1
-        self.total_tokens = 17
+        self.total_tokens = 16
 
         self.embed_dim = 768
 
         self.flattened_dim = self.total_tokens * self.embed_dim
 
-        # 17 * 768 = 13056
-
-        if self.flattened_dim != 13056:
-            raise RuntimeError(
-                "Expected flattened dimension "
-                "17 * 768 = 13056, "
-                f"got {self.flattened_dim}"
-            )
+        # 16 * 768 = 12288
 
         # =====================================================
         # Freeze configuration
@@ -279,17 +118,6 @@ class ActionNet(nn.Module):
         )
 
         # =====================================================
-        # NEW:
-        # previous three actions -> one 768-D token
-        # =====================================================
-
-        self.action_history_embed = ActionHistoryEmbedding(
-            num_actions=self.num_actions,
-            history_length=3,
-            token_dim=self.embed_dim,
-        )
-
-        # =====================================================
         # Optional pretrained JEPA checkpoint
         # =====================================================
 
@@ -326,7 +154,7 @@ class ActionNet(nn.Module):
         #
         # ->
         #
-        # [B, 13056]
+        # [B, 12288]
         #
         # ->
         #
@@ -375,16 +203,11 @@ class ActionNet(nn.Module):
             ),
         )
 
-        print("Action-history JEPA ActionNet")
+        print("JEPA ActionNet (frames only)")
 
         print(
             "Visual tokens:",
             self.num_visual_tokens,
-        )
-
-        print(
-            "Action-history tokens:",
-            self.num_action_tokens,
         )
 
         print(
@@ -634,14 +457,10 @@ class ActionNet(nn.Module):
     def forward(
         self,
         images: torch.Tensor,
-        previous_actions: torch.Tensor,
     ) -> torch.Tensor:
         """
         images:
             [B,12,84,84]
-
-        previous_actions:
-            [B,3]
 
         returns:
             [B,1,num_actions]
@@ -694,86 +513,33 @@ class ActionNet(nn.Module):
                 f"got {visual_tokens.shape[2]}"
             )
 
-        # =====================================================
-        # 3. Previous-three-action token
-        #
-        # [B,3]
-        #
-        # ->
-        #
-        # [B,1,768]
-        # =====================================================
+        student_input = visual_tokens
 
-        action_token = self.action_history_embed(previous_actions)
-
-        # =====================================================
-        # 4. Add action-history token to visual tubelets
-        #
-        # [B,16,768]
-        # +
-        # [B,1,768]
-        #
-        # ->
-        #
-        # [B,17,768]
-        # =====================================================
-
-        student_input = torch.cat(
-            [
-                visual_tokens,
-                action_token,
-            ],
-            dim=1,
-        )
-
-        if student_input.shape[1:] != (
-            17,
-            768,
-        ):
-            raise RuntimeError(
-                f"Expected student input [B,17,768], got {tuple(student_input.shape)}"
-            )
-
-        # =====================================================
-        # 5. Student Transformer
-        #
-        # IMPORTANT:
-        #
-        # Do NOT put this in torch.no_grad(), even when the
-        # student parameters are frozen.
-        #
-        # The action_history_embed is trainable, so gradients
-        # must propagate THROUGH the frozen transformer and
-        # back into the action-history MLP.
-        #
-        # Frozen student parameters have requires_grad=False,
-        # so they themselves will not update.
-        # =====================================================
-
+        # 3. Student Transformer (frozen or fine-tuned; no action input)
         representation = self.student(student_input)
 
         # Expected:
         #
-        # [B,17,768]
+        # [B,16,768]
 
         if representation.shape[1:] != (
-            17,
+            16,
             768,
         ):
             raise RuntimeError(
                 "Expected conditioned student "
-                "representation [B,17,768], "
+                "representation [B,16,768], "
                 f"got {tuple(representation.shape)}"
             )
 
         # =====================================================
         # 6. Fully-connected classifier
         #
-        # [B,17,768]
+        # [B,16,768]
         #
         # ->
         #
-        # flatten [B,13056]
+        # flatten [B,12288]
         #
         # ->
         #

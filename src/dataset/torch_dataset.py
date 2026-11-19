@@ -1,7 +1,7 @@
 import webdataset as wds
 from torch.utils.data import DataLoader
 
-from .utils import get_train_test_files
+from .utils import get_train_test_files, get_train_val_test_files
 
 
 def read_webdataset(file_list, config):
@@ -43,31 +43,25 @@ def create_dataloader(file_list, config, preprocessor=None):
 """
 
 
-def get_torch_dataloaders(game, config, preprocessor=None):
-
+def get_torch_dataloaders(game, config, preprocessor=None, use_val=False):
+    """use_val=True holds config["val_sub"] out of train and adds a "val" loader."""
     games = game if isinstance(game, (list, tuple, set)) else [game]
+    def split(g, c):
+        if use_val:
+            return get_train_val_test_files(g, c)
+        train, test = get_train_test_files(g, c)
+        return train, [], test
 
-    train_files = []
-    test_files = []
-
-    for current_game in games:
-        game_train_files, game_test_files = get_train_test_files(
-            current_game,
-            config,
-        )
-
-        train_files.extend(game_train_files)
-        test_files.extend(game_test_files)
-
-    return {
-        "train": create_dataloader(
-            train_files,
-            config,
-            preprocessor,
-        ),
-        "test": create_dataloader(
-            test_files,
-            config,
-            preprocessor,
-        ),
+    train, val, test = [], [], []
+    for g in games:
+        t, v, e = split(g, config)
+        train += t
+        val += v
+        test += e
+    loaders = {
+        "train": create_dataloader(train, config, preprocessor),
+        "test": create_dataloader(test, config, preprocessor),
     }
+    if use_val and val:
+        loaders["val"] = create_dataloader(val, config, preprocessor)
+    return loaders

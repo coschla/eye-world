@@ -9,7 +9,7 @@ from torch import nn
 
 class ActionHistoryTraining(pl.LightningModule):
     """
-    Trains the action-conditioned JEPA classifier.
+    Trains the frames-only JEPA action classifier.
 
     Expected action packet:
 
@@ -18,16 +18,8 @@ class ActionHistoryTraining(pl.LightningModule):
         or:
             [B, T, 1]
 
-    For a four-action sequence:
-
-        actions[:, -4] = oldest conditioning action
-        actions[:, -3] = conditioning action
-        actions[:, -2] = conditioning action
-        actions[:, -1] = action to predict
-
-    Therefore:
-
-        previous_actions = actions[:, -4:-1]
+    No action history is used: the network sees only the frames, and the
+    target is the last action of the packet:
 
         target = actions[:, -1]
     """
@@ -61,6 +53,12 @@ class ActionHistoryTraining(pl.LightningModule):
             )
         )
 
+        self.encoder_lr = float(hparams.get("encoder_lr", 1e-5))
+
+        self.num_actions = int(hparams["num_actions"])
+
+        self._confusion = {}
+
         self.save_hyperparameters(
             {
                 "learning_rate": self.learning_rate,
@@ -76,13 +74,9 @@ class ActionHistoryTraining(pl.LightningModule):
     def forward(
         self,
         images: torch.Tensor,
-        previous_actions: torch.Tensor,
     ) -> torch.Tensor:
 
-        return self.net(
-            images,
-            previous_actions,
-        )
+        return self.net(images)
 
     # =========================================================
     # Shared train / validation / test logic
@@ -149,37 +143,6 @@ class ActionHistoryTraining(pl.LightningModule):
             raise ValueError(f"Expected actions [B,T], got {tuple(actions.shape)}")
 
         # -----------------------------------------------------
-        # We require at least four actions.
-        #
-        # Three previous actions condition the model.
-        #
-        # Final action is the classification target.
-        # -----------------------------------------------------
-
-        if actions.shape[1] < 4:
-            raise ValueError(
-                "ActionHistoryTraining requires at least "
-                "4 actions per packet: "
-                "3 conditioning actions + 1 target action. "
-                f"Got {tuple(actions.shape)}"
-            )
-
-        # -----------------------------------------------------
-        # Previous three actions
-        #
-        # [B,T]
-        #
-        # ->
-        #
-        # [B,3]
-        # -----------------------------------------------------
-
-        previous_actions = actions[
-            :,
-            -4:-1,
-        ].long()
-
-        # -----------------------------------------------------
         # Current action target
         #
         # [B,T]
@@ -210,18 +173,8 @@ class ActionHistoryTraining(pl.LightningModule):
             )
 
             print(
-                "PREVIOUS ACTION SHAPE:",
-                previous_actions.shape,
-            )
-
-            print(
                 "TARGET SHAPE:",
                 targets.shape,
-            )
-
-            print(
-                "PREVIOUS ACTION EXAMPLE:",
-                previous_actions[0],
             )
 
             print(
@@ -243,19 +196,13 @@ class ActionHistoryTraining(pl.LightningModule):
         # images:
         # [B,12,84,84]
         #
-        # previous_actions:
-        # [B,3]
-        #
         # ->
         #
         # logits:
         # [B,1,18]
         # -----------------------------------------------------
 
-        logits = self.net(
-            images,
-            previous_actions,
-        )
+        logits = self.net(images)
 
         if logits.ndim != 3:
             raise RuntimeError(
@@ -304,7 +251,7 @@ class ActionHistoryTraining(pl.LightningModule):
         self.log(
             f"{stage}_loss",
             loss,
-            on_step=stage == "train",
+            on_step=False,
             on_epoch=True,
             prog_bar=True,
         )
@@ -317,7 +264,49 @@ class ActionHistoryTraining(pl.LightningModule):
             prog_bar=True,
         )
 
+        if stage != "train":
+            confusion = self._confusion.setdefault(
+                stage, torch.zeros(self.num_actions, self.num_actions)
+            )
+            index = targets * self.num_actions + predicted_actions
+            confusion += (
+                torch.bincount(index, minlength=confusion.numel())
+                .view_as(confusion)
+                .cpu()
+                .float()
+            )
+
         return loss
+
+    def _report(self, stage: str) -> None:
+        """Per-class recall plus the "always predict the most common action" baseline."""
+        confusion = self._confusion.pop(stage, None)
+
+        if confusion is None or confusion.sum() == 0:
+            return
+
+        support = confusion.sum(dim=1)
+        recall = confusion.diag() / support.clamp(min=1)
+        present = support > 0
+        balanced = recall[present].mean().item()
+        majority = (support.max() / support.sum()).item()
+        accuracy = (confusion.diag().sum() / support.sum()).item()
+
+        self.log(f"{stage}_balanced_accuracy", balanced)
+        self.log(f"{stage}_majority_baseline", majority)
+
+        if stage == "test":
+            print(f"\nTEST accuracy {accuracy:.3f} | balanced {balanced:.3f} | "
+                  f"majority-class baseline {majority:.3f}")
+            for action in torch.nonzero(present).flatten().tolist():
+                print(f"  action {action:2d}: recall {recall[action]:.3f} "
+                      f"(n={int(support[action])})")
+
+    def on_validation_epoch_end(self):
+        self._report("val")
+
+    def on_test_epoch_end(self):
+        self._report("test")
 
     # =========================================================
     # Lightning steps
@@ -369,18 +358,25 @@ class ActionHistoryTraining(pl.LightningModule):
         # If tubelet_embed and student are frozen,
         # this trains:
         #
-        #   action_history_embed
         #   action_head
 
-        trainable_parameters = [
-            parameter for parameter in self.net.parameters() if parameter.requires_grad
-        ]
+        encoder_ids = {
+            id(p)
+            for module in (self.net.tubelet_embed, self.net.student)
+            for p in module.parameters()
+        }
+        encoder, rest = [], []
 
-        return torch.optim.Adam(
-            trainable_parameters,
-            lr=self.learning_rate,
-            weight_decay=self.weight_decay,
-        )
+        for parameter in self.net.parameters():
+            if parameter.requires_grad:
+                (encoder if id(parameter) in encoder_ids else rest).append(parameter)
+
+        groups = [{"params": rest, "lr": self.learning_rate}]
+
+        if encoder:
+            groups.append({"params": encoder, "lr": self.encoder_lr})
+
+        return torch.optim.Adam(groups, weight_decay=self.weight_decay)
 
     # =========================================================
     # Data loaders

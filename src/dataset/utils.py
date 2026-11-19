@@ -43,9 +43,22 @@ def get_train_test_files(game, config):
     return train_files, test_files
 
 
+def get_train_val_test_files(game, config):
+    """Like get_train_test_files, but config["val_sub"] subjects are held out of train."""
+    train, test = get_train_test_files(game, config)
+    val_sub = set(config.get("val_sub") or [])
+    if not val_sub:
+        return train, [], test
+    val = []
+    for subject in val_sub:
+        val += get_train_test_files(game, {**config, "train_sub": [subject]})[0]
+    return [f for f in train if f not in set(val)], val, test
+
+
 def compute_action_class_weights(
     files,
     num_classes: int = 18,
+    max_ratio: float | None = None,
 ) -> torch.Tensor:
     """
     Inverse-frequency CrossEntropyLoss weights over the full 18-way ALE
@@ -71,9 +84,14 @@ def compute_action_class_weights(
         raw_action = int(cls.decode()) if isinstance(cls, bytes) else int(cls)
         counts[raw_action] += 1
 
-    counts = counts.clamp(min=1)
+    present = counts > 0
+    weights = counts.sum() / (present.sum() * counts.clamp(min=1))
+    weights[~present] = 0.0  # actions this game never uses never appear as targets
 
-    return (counts.sum() / (num_classes * counts)).float()
+    if max_ratio is not None:
+        weights = weights.clamp(max=max_ratio * weights[present].min())
+
+    return weights.float()
 
 
 class OnlineFixationDetector:

@@ -1,5 +1,5 @@
 import torch.nn.functional as F
-from kornia.contrib import compute_padding, extract_tensor_patches
+from kornia.contrib import extract_tensor_patches
 from torch import nn
 
 from .utils import get_3d_sincos_pos_embed
@@ -74,14 +74,20 @@ class TubeletEmbedding(nn.Module):
         video_reshaped = video.reshape(B * T, C, H, W)
         stride = (self.patchx, self.patchy)
         window = (self.patchx, self.patchy)
-        padding = compute_padding((H, W), window, stride)
+        # Pad H/W up to a multiple of the patch size (the signature of kornia's
+        # compute_padding changed across versions, so do it here directly).
+        pad_h = (-H) % self.patchx
+        pad_w = (-W) % self.patchy
+        if pad_h or pad_w:
+            video_reshaped = F.pad(
+                video_reshaped,
+                (pad_w // 2, pad_w - pad_w // 2, pad_h // 2, pad_h - pad_h // 2),
+            )
 
         patches = extract_tensor_patches(
             video_reshaped,
             window_size=window,
             stride=stride,
-            padding=padding,
-            allow_auto_padding=True,
         )  # [B*T, N_spatial, C, patchx, patchy]
 
         N_spatial = patches.size(1)

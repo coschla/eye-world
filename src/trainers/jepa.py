@@ -743,6 +743,7 @@ class ActionConditionVJEPA(pl.LightningModule):
             on_step=True,
             on_epoch=True,
             prog_bar=True,
+            sync_dist=True,
         )
 
         return loss
@@ -1117,6 +1118,7 @@ class ActionConditionVJEPA(pl.LightningModule):
             on_step=True,
             on_epoch=True,
             prog_bar=True,
+            sync_dist=True,
         )
 
         return loss

@@ -552,7 +552,8 @@ class GymManager:
         # =====================================================
 
         legal_action_ids = [
-            int(a) for a in self.env.unwrapped.ale.getMinimalActionSet()
+            int(getattr(a, "value", a))
+            for a in self.env.unwrapped.ale.getMinimalActionSet()
         ]
 
         print(
@@ -1194,7 +1195,8 @@ class GymManager:
 
         # Legal (minimal) ALE action IDs for this particular game.
         legal_action_ids = [
-            int(a) for a in self.env.unwrapped.ale.getMinimalActionSet()
+            int(getattr(a, "value", a))
+            for a in self.env.unwrapped.ale.getMinimalActionSet()
         ]
 
         print(

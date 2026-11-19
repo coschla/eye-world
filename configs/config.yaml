@@ -2,9 +2,17 @@
 raw_data_path: './data/raw/'
 meta_data_path: './data/raw/meta_data.csv'
 processed_data_path: './data/processed/'
+# Starting encoder for the action classifier (set to the JEPA you trained)
+action_init_checkpoint: 'tb_logs/breakout/vjepa_action_world_model/version_2/checkpoints/epoch=34-step=50505.ckpt'
 ckpt_path: 'tb_logs/ms_pacman/vjepa_world_model/version_1/checkpoints/epoch=49-step=164350.ckpt'
-action_classifier_checkpoint_dir: 'checkpoints/action_classifier'
-action_classifier_checkpoint: 'checkpoints/action_classifier/space_invaders-action-history-jepa-best.ckpt'
+world_model_checkpoint: 'tb_logs/breakout/vjepa_action_world_model/version_2/checkpoints/epoch=34-step=50505.ckpt'
+action_classifier_checkpoint_dir: 'checkpoints/action_classifier' # where training saves
+# Checkpoint the gym eval loads (output of train_action_history_classifier)
+action_classifier_checkpoint: 'checkpoints/action_classifier/breakout-action-jepa-best.ckpt'
+# Checkpoint for the CNN action classifier gym recording block
+action_classifier_cnn_checkpoint: 'checkpoints/action_classifier/ms_pacman-action-classifier-best-curent-test-v1.ckpt'
+log_dir: 'tb_logs'
+video_dir: 'video'
 
 # Gym evaluation (env id follows games[0]; channels follow stack_length/grey_scale)
 gym_eval_episodes: 10
@@ -12,12 +20,18 @@ gym_max_steps: 10000
 gym_record_video: true
 # Pytorch
 epochs: 35
+# Action classifier
+learning_rate: 1e-4
+grad_clip: 1.0
+class_weight_max_ratio: null # null = pure inverse-frequency; a number caps the max weight at that multiple of the smallest
+encoder_lr: 1e-5 # only used when freeze_encoder is false
+freeze_encoder: true
 # Game data
-games: ['space_invaders']
+games: ['breakout']
 num_actions: 18 # full ALE action space, shared across all games
 # Dataset parameters
 batch_size: 32
-num_workers: 3
+num_workers: 4 # measured loader throughput: 4 workers ~15 batches/s vs ~5 with 12 (12 train shards / 4 = 3 each)
 shuffle: False
 
 # Data pre-processing
@@ -26,6 +40,7 @@ size_x: 84
 size_y: 84
 train_sub: ['R', 'J']
 test_sub: ['K']
+val_sub: ['J'] # held out of train for the action classifier (picks the best checkpoint)
 grey_scale: False
 # Keep 4 for pretraining. The action-conditioned world model builds its own
 # stack_length = context_frames + ac_num_steps (see ac_config in main.py).
