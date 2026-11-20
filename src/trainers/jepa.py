@@ -2,14 +2,13 @@ import copy
 
 import pytorch_lightning as pl
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 
+from models.jepa import encoder_frames
 from models.utils import block_mask_tubelets_vectorized
-from trainers.utils import format_batch_for_vjepa
 
 
-class VJEPA(pl.LightningModule):
+class JEPA(pl.LightningModule):
     def __init__(
         self,
         model,
@@ -38,6 +37,13 @@ class VJEPA(pl.LightningModule):
             for s, t in zip(self.model.student.parameters(), self.teacher.parameters()):
                 t.mul_(self.ema_decay).add_(s, alpha=1.0 - self.ema_decay)
 
+    # TODO: confirm this hook fires. on_after_optimizer_step is not a
+    # LightningModule hook in PL 2.x (use on_train_batch_end or
+    # on_before_optimizer_step); if it never fires the teacher stays at its
+    # random init. Check that the ema/drift log changes during training.
+    # TODO: V-JEPA 2 uses a momentum schedule (about 0.998 -> 1.0), not a
+    # fixed 0.996, and EMAs the patch embedding together with the encoder
+    # (here tubelet_embed is shared and not EMA'd).
     def on_after_optimizer_step(self, optimizer):
         self.update_teacher()
 
@@ -49,13 +55,15 @@ class VJEPA(pl.LightningModule):
         }
 
     def training_step(self, batch, batch_idx):
-        img, _ = batch  # [B, T, H, W]
+        img, _ = batch  # [B, T*C, H, W] stacked frames
         B = img.shape[0]
 
         # --------------------------------------------------
         # Tokenize once — shared by student and teacher
         # --------------------------------------------------
-        x = img.unsqueeze(2)  # [B, T, 1, H, W]
+        x = encoder_frames(
+            img, int(self.config["stack_length"]), self.config.get("grey_scale", True)
+        )  # [B, T, C, H, W]
         all_tokens = self.model.tubelet_embed(x)  # [B, N, D]
         N, D = all_tokens.shape[1], all_tokens.shape[2]
 
@@ -65,6 +73,9 @@ class VJEPA(pl.LightningModule):
         _, mask_bool = block_mask_tubelets_vectorized(
             all_tokens,
             drop_ratio=self.mask_ratio,
+            # TODO: block_size=2 masks two neighbouring patches, which
+            # is easy to fill in by interpolation. V-JEPA 2 masks large
+            # contiguous spatiotemporal blocks (multi-block masking).
             block_size=self.config.get("block_size", 2),
         )  # mask_bool: [B, N], True = masked
 
@@ -75,7 +86,10 @@ class VJEPA(pl.LightningModule):
         # Teacher — sees all tokens, no grad
         # --------------------------------------------------
         with torch.no_grad():
+            # Layer-norm each target token over its features (no learnable
+            # affine), as V-JEPA 2 does, so the target scale is fixed.
             target_full = self.teacher(all_tokens)  # [B, N, D]
+            target_full = F.layer_norm(target_full, (D,))
 
         # --------------------------------------------------
         # Student — sees only visible tokens
@@ -95,9 +109,14 @@ class VJEPA(pl.LightningModule):
         pred = self.pred(queries=masked_pos, context=student_repr)
 
         # --------------------------------------------------
-        # Loss: smooth-L1 + variance regularization
+        # Loss: L1 + variance regularization
         # --------------------------------------------------
-        loss_jepa = F.smooth_l1_loss(pred, target_masked)
+        loss_jepa = F.l1_loss(pred, target_masked)
+        # TODO: the targets are now unit-scale per token, so the hinge below
+        # (std over tokens within a sample, threshold 1.0) may push the
+        # prediction away from the targets. Compare rep/pred_var with
+        # rep/tgt_var; if the targets themselves have std < 1 across tokens,
+        # lower the threshold or set reg_coeff to 0 (V-JEPA 2 has no such term).
         pred_std = pred.std(dim=1)
         loss_reg = F.relu(1.0 - pred_std).mean()
         loss = loss_jepa + self.reg_coeff * loss_reg
@@ -108,13 +127,13 @@ class VJEPA(pl.LightningModule):
         pred_stats = self._rep_stats(pred)
         tgt_stats = self._rep_stats(target_masked)
 
-        self.log("loss/jepa", loss_jepa, on_epoch=True, prog_bar=True)
-        self.log("loss/reg", loss_reg, on_epoch=True)
-        self.log("loss/total", loss, on_epoch=True, prog_bar=True)
-        self.log("rep/pred_var", pred_stats["var"], on_epoch=True)
-        self.log("rep/tgt_var", tgt_stats["var"], on_epoch=True)
-        self.log("rep/pred_norm", pred_stats["norm"], on_epoch=True)
-        self.log("rep/tgt_norm", tgt_stats["norm"], on_epoch=True)
+        self.log("loss/jepa", loss_jepa, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log("loss/reg", loss_reg, on_epoch=True, sync_dist=True)
+        self.log("loss/total", loss, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log("rep/pred_var", pred_stats["var"], on_epoch=True, sync_dist=True)
+        self.log("rep/tgt_var", tgt_stats["var"], on_epoch=True, sync_dist=True)
+        self.log("rep/pred_norm", pred_stats["norm"], on_epoch=True, sync_dist=True)
+        self.log("rep/tgt_norm", tgt_stats["norm"], on_epoch=True, sync_dist=True)
 
         with torch.no_grad():
             n_params = sum(1 for _ in self.model.student.parameters())
@@ -124,7 +143,7 @@ class VJEPA(pl.LightningModule):
                     self.model.student.parameters(), self.teacher.parameters()
                 )
             )
-            self.log("ema/drift", drift / n_params, on_epoch=True)
+            self.log("ema/drift", drift / n_params, on_epoch=True, sync_dist=True)
 
         return loss
 
@@ -133,163 +152,6 @@ class VJEPA(pl.LightningModule):
             list(self.model.tubelet_embed.parameters())
             + list(self.model.student.parameters())
             + list(self.pred.parameters()),
-            lr=self.lr,
-            weight_decay=1e-4,
-        )
-
-
-class ActionConditionVJEPA(pl.LightningModule):
-    def __init__(
-        self,
-        model,
-        action_embed,
-        config,
-        latent_pred_dim=None,
-        num_visible_frames=4,
-        lr=1e-4,
-        ema_decay=0.996,
-    ):
-        """
-        Args:
-            model: VJEPAEncoder containing student + tubelet_embed
-            config: dict, must contain "action_dim"
-            ckpt_path: path to pretrained V-JEPA checkpoint
-            latent_pred_dim: optional dim for latent predictor
-            num_visible_frames: how many frames student sees
-        """
-        super().__init__()
-        self.model = model
-        self.config = config
-        self.lr = lr
-        self.ema_decay = ema_decay
-        self.num_visible_frames = num_visible_frames
-
-        # Teacher starts as copy of student
-        self.teacher = copy.deepcopy(model.student)
-        for p in self.teacher.parameters():
-            p.requires_grad = False
-
-        # Action embedding
-        self.action_embed = action_embed
-
-        # Autoregressive latent predictor (causal transformer)
-        D = model.student.encoder.layers[0].self_attn.embed_dim
-        latent_pred_dim = latent_pred_dim or D
-        self.latent_predictor = nn.Transformer(
-            d_model=D,
-            nhead=8,
-            num_encoder_layers=3,
-            num_decoder_layers=3,
-            dim_feedforward=2048,
-            batch_first=True,
-        )
-
-        ckpt_path = config["ckpt_path"]
-        try:
-            ckpt = torch.load(ckpt_path, map_location="cpu")
-
-            # Load weights
-            student_weights = {
-                k.replace("model.student.", ""): v
-                for k, v in ckpt["state_dict"].items()
-                if k.startswith("model.student.")
-            }
-            self.model.student.load_state_dict(student_weights)
-
-            # Load tubelet embedding weights
-            embed_weights = {
-                k.replace("model.tubelet_embed.", ""): v
-                for k, v in ckpt["state_dict"].items()
-                if k.startswith("model.tubelet_embed.")
-            }
-            self.model.tubelet_embed.load_state_dict(embed_weights)
-        except FileNotFoundError:
-            pass
-
-        # Teacher starts as EMA of student
-        self.teacher.load_state_dict(self.model.student.state_dict())
-
-    def update_teacher(self):
-        with torch.no_grad():
-            for s, t in zip(self.model.student.parameters(), self.teacher.parameters()):
-                t.data.mul_(self.ema_decay).add_(s.data, alpha=1.0 - self.ema_decay)
-
-    def on_after_optimizer_step(self, optimizer, optimizer_idx=None):
-        self.update_teacher()
-
-    def training_step(self, batch, batch_idx):
-        # -------------------------------
-        # Format batch
-        # -------------------------------
-        img, actions = format_batch_for_vjepa(batch, self.config)
-
-        if isinstance(img, list):
-            img = torch.stack(img)
-
-        context_frames = self.config[
-            "context_frames"
-        ]  # n frames for student; rest go to teacher
-        # -------------------------------
-        # Split sequence (CRITICAL)
-        # -------------------------------
-        student_frames = img[:, :context_frames]
-        teacher_frame = img[:, context_frames:]
-        student_x = student_frames.unsqueeze(2)  # [B, 4, 1, H, W]
-        teacher_x = teacher_frame.unsqueeze(2)  # [B, 1, 1, H, W]
-
-        # -------------------------------
-        # Student forward
-        # -------------------------------
-        with torch.no_grad():
-            student_tokens = self.model.tubelet_embed(student_x)  # [B, N, D]
-            student_tokens = self.model.student.encoder(student_tokens)
-
-        # -------------------------------
-        # Action embedding (FIXED)
-        # -------------------------------
-        last_actions = actions[:, context_frames - 1]  # action at last context frame [B]
-        action_emb = self.action_embed(last_actions)  # [B, D]
-        action_emb = action_emb.unsqueeze(1)  # [B, 1, D]
-
-        # -------------------------------
-        # Combine tokens + action
-        # -------------------------------
-        seq = torch.cat([student_tokens, action_emb], dim=1)  # [B, N+1, D]
-
-        # -------------------------------
-        # Teacher forward (FIXED)
-        # -------------------------------
-        with torch.no_grad():
-            teacher_tokens = self.model.tubelet_embed(teacher_x)  # [B, Nt, D]
-            teacher_latents = self.teacher(teacher_tokens)  # [B, Nt, D]
-
-        # -------------------------------
-        # Predictor
-        # -------------------------------
-        # Use sequence except last token as input
-        pred_seq = self.latent_predictor(seq[:, :-1, :], seq[:, :-1, :])
-
-        # Take last predicted token
-        student_pred = pred_seq[:, -1, :]  # [B, D]
-
-        # -------------------------------
-        # Target
-        # -------------------------------
-        target = teacher_latents.mean(dim=1)  # [B, D]
-
-        # -------------------------------
-        # Loss
-        # -------------------------------
-        loss = F.smooth_l1_loss(student_pred, target)
-
-        self.log("loss/action_jepa", loss, on_epoch=True, prog_bar=True)
-
-        return loss
-
-    def configure_optimizers(self):
-        return torch.optim.AdamW(
-            list(self.latent_predictor.parameters())
-            + list(self.action_embed.parameters()),
             lr=self.lr,
             weight_decay=1e-4,
         )

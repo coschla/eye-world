@@ -1,16 +1,16 @@
-import torch.nn as nn
 import torch.nn.functional as F
-from kornia.contrib import compute_padding, extract_tensor_patches
+from kornia.contrib import extract_tensor_patches
+from torch import nn
 
-from models.utils import get_3d_sincos_pos_embed
+from .utils import get_3d_sincos_pos_embed
 
 DEBUG = False  # set True for debugging
 
 
 # -------------------------------------------------
-# VJEPA Encoder — inference model (tubelet embed + student)
+# JEPA Encoder — inference model (tubelet embed + student)
 # -------------------------------------------------
-class VJEPAEncoder(nn.Module):
+class JEPAEncoder(nn.Module):
     def __init__(self, tubelet_embed, student):
         super().__init__()
         self.tubelet_embed = tubelet_embed
@@ -24,6 +24,22 @@ class VJEPAEncoder(nn.Module):
         x = video.unsqueeze(2)  # [B, T, 1, H, W]
         tokens = self.tubelet_embed(x)  # [B, N, D]
         return self.student(tokens)  # [B, N, D]
+
+
+def encoder_frames(images, num_frames, grey=True):
+    """
+    Stacked frames [B, T*C, H, W] (C = 1 or 3) -> [B, T, C', H, W] for the tubelet
+    embedding. RGB is converted to luminance when grey, so pretraining, the
+    classifier and the gym all feed the encoder the same tokens.
+    """
+    B, CT, H, W = images.shape
+    frames = images.reshape(B, num_frames, CT // num_frames, H, W)
+
+    if grey and frames.size(2) == 3:
+        red, green, blue = frames[:, :, 0], frames[:, :, 1], frames[:, :, 2]
+        frames = (0.299 * red + 0.587 * green + 0.114 * blue).unsqueeze(2)
+
+    return frames
 
 
 # -------------------------------------------------
@@ -49,6 +65,7 @@ class TubeletEmbedding(nn.Module):
         self.num_patches = self.grid_h * self.grid_w * self.grid_depth
 
         tubelet_input_dim = patch_dim * self.patchx * self.patchy * self.tubelet_size
+
         self.proj = nn.Linear(tubelet_input_dim, embed_dim)
 
         pos_embed = get_3d_sincos_pos_embed(
@@ -61,20 +78,32 @@ class TubeletEmbedding(nn.Module):
         video: [B, T, C, H, W]
         returns: [B, num_patches, embed_dim]
         """
+
+        # print(f"patch_dim=  {self.patch_dim}")
+        # print(f"self.patchx= {self.patchx}")
+        # print(f"self.patchy= {self.patchy}")
+        # print(f"self.tubelet_size =   {self.tubelet_size}")
+
         B, T, C, H, W = video.shape
         # assert T == self.stack_size, f"Expected T={self.stack_size}, got {T}"
 
         video_reshaped = video.reshape(B * T, C, H, W)
         stride = (self.patchx, self.patchy)
         window = (self.patchx, self.patchy)
-        padding = compute_padding((H, W), window, stride)
+        # Pad H/W up to a multiple of the patch size (the signature of kornia's
+        # compute_padding changed across versions, so do it here directly).
+        pad_h = (-H) % self.patchx
+        pad_w = (-W) % self.patchy
+        if pad_h or pad_w:
+            video_reshaped = F.pad(
+                video_reshaped,
+                (pad_w // 2, pad_w - pad_w // 2, pad_h // 2, pad_h - pad_h // 2),
+            )
 
         patches = extract_tensor_patches(
             video_reshaped,
             window_size=window,
             stride=stride,
-            padding=padding,
-            allow_auto_padding=True,
         )  # [B*T, N_spatial, C, patchx, patchy]
 
         N_spatial = patches.size(1)
@@ -149,23 +178,3 @@ class ActionOneHot(nn.Module):
 
     def forward(self, action):
         return F.one_hot(action.long(), num_classes=self.num_actions).float()
-
-
-class ActionEmbedding(nn.Module):
-    def __init__(self, num_actions=18, token_dim=768):
-        super().__init__()
-
-        self.expand = ActionOneHot(num_actions)
-
-        self.mlp = nn.Sequential(
-            nn.Linear(num_actions, 128),
-            nn.ReLU(),
-            nn.Linear(128, 512),
-            nn.ReLU(),
-            nn.Linear(512, token_dim),
-        )
-
-    def forward(self, action):
-        one_hot = self.expand(action)  # [B,18] or [B,T,18]
-        token = self.mlp(one_hot)  # [B,token_dim] or [B,T,token_dim]
-        return token

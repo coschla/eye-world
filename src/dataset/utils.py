@@ -2,6 +2,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import torch
+import webdataset as wds
 
 
 def get_game_meta_data(game: str, config: dict) -> pd.DataFrame:
@@ -39,6 +41,59 @@ def get_train_test_files(game, config):
             test_files.extend(name)
 
     return train_files, test_files
+
+
+def get_train_val_test_files(game, config):
+    """Like get_train_test_files, but config["val_sub"] subjects are held out of train."""
+    train, test = get_train_test_files(game, config)
+    val_sub = set(config.get("val_sub") or [])
+    if not val_sub:
+        return train, [], test
+    val = []
+    for subject in val_sub:
+        val += get_train_test_files(game, {**config, "train_sub": [subject]})[0]
+    return [f for f in train if f not in set(val)], val, test
+
+
+def compute_action_class_weights(
+    files,
+    num_classes: int = 18,
+    max_ratio: float | None = None,
+    min_count: int = 1,
+) -> torch.Tensor:
+    """
+    Inverse-frequency CrossEntropyLoss weights over the full 18-way ALE
+    action space (raw action IDs, shared by every game), computed from the true label distribution in the given
+    WebDataset shards (e.g. train_files from get_train_test_files).
+
+    Atari action logs are heavily skewed toward NOOP (~76% in Breakout's
+    raw human-play data), so an unweighted loss lets the classifier
+    minimize loss by always predicting NOOP. Only the "cls" field is
+    read here, so this doesn't decode any images.
+    """
+
+    dataset = wds.WebDataset(
+        files,
+        shardshuffle=False,
+        nodesplitter=wds.split_by_worker,
+        empty_check=False,
+    ).to_tuple("cls")
+
+    counts = torch.zeros(num_classes, dtype=torch.long)
+
+    for (cls,) in dataset:
+        raw_action = int(cls.decode()) if isinstance(cls, bytes) else int(cls)
+        counts[raw_action] += 1
+
+    present = counts > 0
+    # min_count: a class with fewer samples is weighted as if it had min_count
+    weights = counts.sum() / (present.sum() * counts.clamp(min=max(min_count, 1)))
+    weights[~present] = 0.0  # actions this game never uses never appear as targets
+
+    if max_ratio is not None:
+        weights = weights.clamp(max=max_ratio * weights[present].min())
+
+    return weights.float()
 
 
 class OnlineFixationDetector:

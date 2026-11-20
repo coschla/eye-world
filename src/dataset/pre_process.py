@@ -1,6 +1,8 @@
 from collections import deque
 
+import numpy as np
 import torch
+from PIL import Image
 from torchvision import transforms
 
 from .eye_gaze_process import eye_gaze_to_density_image
@@ -30,11 +32,34 @@ class Resize:
                 ]
             )
 
+    def reset(self):
+        pass
+
     def __call__(self, sample):
         img, eye_gazes, action = sample
+
+        # ✅ Handle different input types safely
+        if isinstance(img, np.ndarray):
+            img = Image.fromarray(img)  # numpy → PIL
+
+        elif isinstance(img, torch.Tensor):
+            # If it's already a tensor, make sure shape is (C, H, W)
+            if img.ndim == 3 and img.shape[0] not in [1, 3]:
+                # likely (H, W, C) → convert
+                img = img.permute(2, 0, 1)
+
+        # PIL images pass through untouched
+
         img = self.transform(img)
 
         return img, eye_gazes, action
+
+
+"""    def __call__(self, sample):
+        img, eye_gazes, action = sample
+        img = self.transform(img)
+
+        return img, eye_gazes, action"""
 
 
 class Stack:
@@ -42,6 +67,9 @@ class Stack:
         self.stack_len = config["stack_length"]
         self.stack = deque(maxlen=self.stack_len)
         self.config = config
+
+    def reset(self):
+        self.stack.clear()
 
     def __call__(self, sample):
         img, eye_gazes, action = sample
@@ -61,54 +89,145 @@ class Stack:
 
 class StackWithLabels:
     """
-    Stacks images, gaze, and actions in temporal order. Keeps everything aligned with stack_len frames.
+    Stacks images, gaze, and actions in temporal order.
+
+    Output ordering:
+        [t-3, t-2, t-1, t]
+
+    Therefore:
+        stacked_action[-1] == action for newest frame t
     """
 
     def __init__(self, config):
         self.stack_len = config["stack_length"]
         self.config = config
+
         self.img_stack = deque(maxlen=self.stack_len)
         self.gaze_stack = deque(maxlen=self.stack_len)
         self.action_stack = deque(maxlen=self.stack_len)
+        # Per-frame gaze density maps, cached so each frame's (expensive)
+        # fixation detection + density map runs once, not stack_len times.
+        self.density_stack = deque(maxlen=self.stack_len)
+
+    def reset(self):
+        self.img_stack.clear()
+        self.gaze_stack.clear()
+        self.action_stack.clear()
+        self.density_stack.clear()
 
     def __call__(self, sample):
         img, eye_gaze, action = sample
 
+        # -----------------------------------------------------
+        # INITIAL STACK
+        # -----------------------------------------------------
+        # When the first frame arrives, duplicate it so that
+        # the stack immediately has stack_len entries.
+        #
+        # Example:
+        # [frame_0, frame_0, frame_0, frame_0]
+        #
+        # and:
+        # [action_0, action_0, action_0, action_0]
+        # -----------------------------------------------------
+
+        use_density = self.config.get("eye_density", False)
+        density = None
+        if use_density:
+            density = eye_gaze_to_density_image(img.shape, eye_gaze, self.config)
+
         if len(self.img_stack) < self.stack_len:
             while len(self.img_stack) < self.stack_len:
-                # Append current sample
                 self.img_stack.append(img)
                 self.gaze_stack.append(eye_gaze)
                 self.action_stack.append(action)
+                self.density_stack.append(density)
+
         else:
+            # IMPORTANT:
+            # Everything gets appended in the SAME direction.
+            #
+            # deque(maxlen=N) automatically removes the
+            # oldest item from the left.
             self.img_stack.append(img)
-            self.gaze_stack.appendleft(eye_gaze)
-            self.action_stack.appendleft(action)
+            self.gaze_stack.append(eye_gaze)
+            self.action_stack.append(action)
+            self.density_stack.append(density)
 
-        # Stack images along channel dimension: (C, H, W) -> (stack_len*C, H, W)
-        stacked_img = torch.cat(list(self.img_stack), dim=0)
+        # -----------------------------------------------------
+        # IMAGE STACK
+        # -----------------------------------------------------
+        #
+        # Temporal order:
+        #
+        # [oldest, ..., newest]
+        #
+        # For 4 RGB frames:
+        #
+        # 4 * 3 channels = 12 channels
+        #
+        # Result:
+        # (12, H, W)
+        # -----------------------------------------------------
 
-        # Stack actions as tensor (stack_len,)
-        stacked_action = torch.tensor(list(self.action_stack), dtype=torch.long)
+        stacked_img = torch.cat(
+            list(self.img_stack),
+            dim=0,
+        )
 
-        # Stack gaze
+        # -----------------------------------------------------
+        # ACTION STACK
+        # -----------------------------------------------------
+        #
+        # Temporal order is now identical to image_stack:
+        #
+        # [action t-3,
+        #  action t-2,
+        #  action t-1,
+        #  action t]
+        #
+        # Therefore:
+        #
+        # stacked_action[-1]
+        #
+        # is the action associated with the newest frame.
+        # -----------------------------------------------------
+
+        stacked_action = torch.tensor(
+            list(self.action_stack),
+            dtype=torch.long,
+        )
+
+        # -----------------------------------------------------
+        # GAZE STACK
+        # -----------------------------------------------------
+
         if self.config.get("eye_density", False):
-            # For density maps, generate one per frame and stack channels
-            gaze_maps = [
-                eye_gaze_to_density_image(img.shape, gaze, self.config)
-                for gaze in self.gaze_stack
-            ]
-            stacked_gaze = torch.cat(gaze_maps, dim=0)
-        else:
-            # For raw gaze points: (stack_len, 2)
-            stacked_gaze = torch.tensor(self.gaze_stack, dtype=torch.float32)
+            stacked_gaze = torch.cat(
+                list(self.density_stack),
+                dim=0,
+            )
 
-        return stacked_img, stacked_gaze, stacked_action
+        else:
+            stacked_gaze = torch.tensor(
+                list(self.gaze_stack),
+                dtype=torch.float32,
+            )
+
+        return (
+            stacked_img,
+            stacked_gaze,
+            stacked_action,
+        )
 
 
 class ComposePreprocessor:
     def __init__(self, preprocessors):
         self.preprocessors = preprocessors
+
+    def reset(self):
+        for p in self.preprocessors:
+            p.reset()
 
     def __call__(self, sample):
         for p in self.preprocessors:
