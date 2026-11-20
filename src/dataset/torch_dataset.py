@@ -18,18 +18,21 @@ def read_webdataset(file_list, config):
     return dataset
 
 
-def create_dataloader(file_list, config, preprocessor=None):
+def create_dataloader(file_list, config, preprocessor=None, shuffle=False):
     dataset = read_webdataset(file_list, config)
 
-    # Apply optional preprocessor
+    # Apply optional preprocessor (frame stacking needs the original order)
     if preprocessor:
         dataset = dataset.map(preprocessor)
+
+    # Iterable dataset: shuffle samples in a buffer, not through the DataLoader
+    if shuffle:
+        dataset = dataset.shuffle(int(config["shuffle_buffer"]))
 
     return DataLoader(
         dataset,
         batch_size=config["batch_size"],
         num_workers=config["num_workers"],
-        shuffle=config["shuffle"],
     )
 
 
@@ -59,7 +62,7 @@ def get_torch_dataloaders(game, config, preprocessor=None, use_val=False):
         val += v
         test += e
     loaders = {
-        "train": create_dataloader(train, config, preprocessor),
+        "train": create_dataloader(train, config, preprocessor, config["shuffle"]),
         "test": create_dataloader(test, config, preprocessor),
     }
     if use_val and val:

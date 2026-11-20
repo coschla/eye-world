@@ -512,6 +512,10 @@ class GymManager:
 
         print("Gym environment:", env_name)
 
+        # Sticky actions: probability that a step repeats the previous action (gym v5 default 0.25)
+        repeat_prob = float(config.get("gym_repeat_action_probability", 0.25))
+        print("Sticky-action probability:", repeat_prob)
+
         # =====================================================
         # Create Gym environment
         # =====================================================
@@ -528,6 +532,7 @@ class GymManager:
                 env_name,
                 render_mode="rgb_array",
                 full_action_space=True,
+                repeat_action_probability=repeat_prob,
             )
 
             self.env = RecordVideo(
@@ -547,6 +552,7 @@ class GymManager:
             self.env = gym.make(
                 env_name,
                 full_action_space=True,
+                repeat_action_probability=repeat_prob,
             )
 
         # =====================================================

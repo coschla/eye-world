@@ -13,14 +13,15 @@ action_classifier_checkpoint: 'tb_logs/breakout/action_jepa_classifier/version_2
 action_classifier_cnn_checkpoint: 'checkpoints/action_classifier/ms_pacman-action-classifier-best-curent-test-v1.ckpt' # CNN gym recording
 
 # ----------------------------------------------------------------- Data
-games: ['breakout']
+games: ['freeway']
 num_actions: 18 # full ALE action space, shared across all games
 train_sub: ['R', 'J']
 val_sub: ['J'] # held out of train for the action classifier (picks the best checkpoint)
 test_sub: ['K']
 batch_size: 32
 num_workers: 4 # measured loader throughput: 4 workers ~15 batches/s vs ~5 with 12 (12 train shards / 4 = 3 each)
-shuffle: False
+shuffle: True # shuffle training samples (buffered; val/test keep their order)
+shuffle_buffer: 5000 # samples held in the shuffle buffer, per loader worker
 
 # Frames
 original_size: [210, 160]
@@ -46,7 +47,7 @@ data_writer:
 patchx: 21
 patchy: 21
 tubelet_size: *context_frames # frames per tubelet
-epochs: 15 # shared by every training block
+epochs: 12 # shared by every training block
 
 # ------------------------------------------------- Action classifier
 freeze_encoder: true
@@ -69,4 +70,5 @@ ac_lr: 1e-4
 gym_eval_episodes: 10
 gym_max_steps: 10000
 gym_record_video: true
+gym_repeat_action_probability: 0.25 # sticky actions: chance a step repeats the last action (gym v5 default)
 gym_auto_fire: true # press FIRE at episode start and after each life lost (Breakout needs it to launch the ball)

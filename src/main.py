@@ -29,10 +29,9 @@ from models.jepa import (
     TubeletEmbedding,
     JEPAEncoder,
 )
-from trainers.action_classifier import ActionTraining
 from trainers.gaze_predict import GazeTraining
 from trainers.jepa import JEPA
-from trainers.jepa_action import ActionHistoryTraining
+from trainers.action_classifier import ActionHistoryTraining
 from trainers.jepa_rollout import RolloutActionJEPA, load_encoder_weights
 from utils import InterleavedDataset, skip_run
 
@@ -129,6 +128,67 @@ with skip_run("skip", "gaze_prediction_conv_deconv") as check, check():
         enable_progress_bar=True,
     )
     trainer.fit(model)
+
+
+with skip_run("skip", "train_cnn_classifier") as check, check():
+    cnn_config = {**config, "stack_length": 3, "epochs": 25}  # single frame, as in the Atari-HEAD paper
+    game = cnn_config["games"]
+    games_name = "_".join(game)
+    num_actions = int(cnn_config["num_actions"])
+    preprocessor = ComposePreprocessor([Resize(cnn_config), StackWithLabels(cnn_config)])
+    data_loaders = get_torch_dataloaders(game, cnn_config, preprocessor, use_val=True)
+
+    train_files = [f for g in game for f in get_train_val_test_files(g, cnn_config)[0]]
+    class_weights = compute_action_class_weights(
+        train_files,
+        num_actions,
+        cnn_config.get("class_weight_max_ratio"),
+        int(cnn_config["class_weight_min_count"]),
+    )
+    in_channels = int(cnn_config["stack_length"]) * (1 if cnn_config.get("grey_scale", True) else 3)
+    training_model = ActionHistoryTraining(
+        cnn_config, ActionNet(num_actions, in_channels), data_loaders, class_weights
+    )
+
+    checkpoint_callback = ModelCheckpoint(
+        filename=f"{games_name}-cnn-best", monitor="val_balanced_accuracy", mode="max", save_top_k=1
+    )
+    gpu = torch.cuda.is_available()
+    trainer = pl.Trainer(
+        logger=TensorBoardLogger(LOG_DIR, name=f"{games_name}/cnn_classifier"),
+        callbacks=[checkpoint_callback],
+        accelerator="gpu" if gpu else "cpu",
+        devices=2,
+        max_epochs=int(cnn_config["epochs"]),
+        log_every_n_steps=10,
+        gradient_clip_val=float(cnn_config["grad_clip"]),
+    )
+    trainer.fit(training_model)
+    trainer.test(training_model, dataloaders=data_loaders["test"], ckpt_path="best")
+    print("Best checkpoint:", checkpoint_callback.best_model_path)
+
+
+with skip_run("run", "evaluate_cnn_classifier") as check, check():
+    # Same single-frame setup as train_cnn_classifier. Freeway has no FIRE, so no auto-FIRE.
+    cnn_config = {**config, "stack_length": 1, "gym_auto_fire": True, "gym_repeat_action_probability": 0.0}
+    cnn_config["action_classifier_checkpoint"] = "tb_logs/freeway/cnn_classifier/version_4/checkpoints/freeway-cnn-best.ckpt"
+
+    manager = GymManager(
+        config=cnn_config,
+        preprocessor_pipeline=ComposePreprocessor(
+            [Resize(cnn_config), StackWithLabels(cnn_config)]
+        ),
+        action_net=ActionNet(int(cnn_config["num_actions"]), in_channels=cnn_config['stack_length']),
+        record_video=bool(cnn_config["gym_record_video"]),
+        video_folder=str(VIDEO_DIR / "cnn_classifier"),
+        episode_trigger=lambda episode_id: episode_id == 0,
+    )
+
+    evaluate_policy(
+        manager,
+        num_episodes=int(cnn_config["gym_eval_episodes"]),
+        max_steps=int(cnn_config["gym_max_steps"]),
+    )
 
 
 with skip_run("skip", "jepa_training_multi_game") as check, check():
@@ -306,7 +366,7 @@ with skip_run("skip", "train_action_classifier") as check, check():
     print("Best checkpoint:", checkpoint_callback.best_model_path)
 
 
-with skip_run("run", "evaluate_action_model") as check, check():
+with skip_run("skip", "evaluate_action_model") as check, check():
     config["action_classifier_checkpoint"] = "tb_logs/breakout/action_jepa_classifier/version_2/checkpoints/breakout-action-jepa-best.ckpt"
     runtime_config = dict(config)
 
@@ -400,104 +460,6 @@ with skip_run("skip", "jepa_rollout_with_validation") as check, check():
         model,
         train_dataloaders=dataloaders["train"],
         val_dataloaders=dataloaders["test"],
-    )
-
-
-with skip_run("skip", "train_action_classifier") as check, check():
-    game = config["games"]
-    games_name = "_".join(game)
-    training_preprocessor = ComposePreprocessor(
-        [
-            Resize(config),
-            StackWithLabels(config),
-        ]
-    )
-
-    dataset_loaders = get_torch_dataloaders(
-        game,
-        config,
-        preprocessor=training_preprocessor,
-    )
-
-    if "train" not in dataset_loaders:
-        raise KeyError("get_torch_dataloaders() did not return a 'train' loader.")
-
-    data_loaders = {"train": dataset_loaders["train"]}
-
-    if "val" in dataset_loaders:
-        data_loaders["val"] = dataset_loaders["val"]
-
-    if "test" in dataset_loaders:
-        data_loaders["test"] = dataset_loaders["test"]
-
-    num_actions = int(config["num_actions"])
-
-    if num_actions != len(ALE_ACTION_NAMES):
-        raise ValueError(
-            f"The classifier uses the full ALE action space "
-            f"({len(ALE_ACTION_NAMES)} classes), but config has {num_actions}."
-        )
-
-    # Inverse-frequency weights over the shared 18-way action space.
-    train_files = []
-    for g in game:
-        train_files.extend(get_train_test_files(g, config)[0])
-
-    class_weights = compute_action_class_weights(
-        train_files, num_actions, config.get("class_weight_max_ratio")
-    )
-
-    print("\nCLASS WEIGHTS")
-    for action_id, weight in enumerate(class_weights.tolist()):
-        print(action_id, ALE_ACTION_NAMES[action_id], f"{weight:.3f}")
-
-    action_network = ActionNet(
-        num_actions=num_actions,
-    )
-
-    training_model = ActionTraining(
-        hparams=config,
-        net=action_network,
-        data_loader=data_loaders,
-        class_weights=class_weights,
-    )
-
-    checkpoint_callback = ModelCheckpoint(
-        filename=f"{games_name}-action-classifier-best-curent-test",
-        monitor="val_loss",
-        mode="min",
-        save_top_k=1,
-        every_n_epochs=1,
-    )
-
-    logger = TensorBoardLogger(
-        save_dir=LOG_DIR,
-        name=f"{games_name}/action_classifier",
-    )
-
-    accelerator = "gpu" if torch.cuda.is_available() else "cpu"
-
-    trainer = pl.Trainer(
-        logger=logger,
-        callbacks=[checkpoint_callback],
-        accelerator=accelerator,
-        devices=1,
-        max_epochs=int(config["epochs"]),
-        log_every_n_steps=10,
-    )
-
-    trainer.fit(training_model)
-
-    if data_loaders.get("test") is not None:
-        trainer.test(
-            training_model,
-            dataloaders=data_loaders["test"],
-        )
-
-    print("\nTraining complete")
-    print(
-        "Last checkpoint:",
-        checkpoint_callback.last_model_path,
     )
 
 
