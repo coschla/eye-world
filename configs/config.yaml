@@ -47,7 +47,7 @@ data_writer:
 patchx: 21
 patchy: 21
 tubelet_size: *context_frames # frames per tubelet
-epochs: 12 # shared by every training block
+epochs: 20 # shared by every training block
 
 # ------------------------------------------------- Action classifier
 freeze_encoder: true
@@ -56,6 +56,11 @@ encoder_lr: 1e-5 # only used when freeze_encoder is false
 grad_clip: 1.0
 class_weight_min_count: 100 # a class with fewer samples is weighted as if it had this many
 class_weight_max_ratio: null # null = pure inverse frequency; a number caps the largest weight at that multiple of the smallest
+
+# ------------------------------------------------- Conv JEPA
+conv_jepa_dim: 512 # latent size of the CNN encoder
+conv_jepa_frames: 2 # frames fed to the encoder (also the classifier's and gym's stack)
+conv_jepa_horizon: 2 # next frames whose latent is predicted (= number of actions conditioned on)
 
 # -------------------------------------- Rollout world model (optional)
 ac_num_steps: 8 # future steps per sample; also the predictor's max sequence length

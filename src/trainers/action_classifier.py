@@ -388,7 +388,7 @@ class ActionHistoryTraining(pl.LightningModule):
 
         encoder_ids = {
             id(p)
-            for name in ("tubelet_embed", "student")
+            for name in ("tubelet_embed", "student", "encoder")
             if hasattr(self.net, name)
             for p in getattr(self.net, name).parameters()
         }

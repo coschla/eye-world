@@ -7,13 +7,7 @@ import gymnasium as gym
 import torch
 from gymnasium.wrappers import RecordVideo
 
-from .utils import (
-    ALE_ACTION_NAMES,
-    print_episode_report,
-    print_header,
-    print_step,
-    print_summary_report,
-)
+from .utils import ALE_ACTION_NAMES, print_summary_report
 
 # ActionNet only consumes the stacked image, never gaze/action, so these
 # placeholders just need to satisfy the caller's pipeline's sample shape.
@@ -169,11 +163,6 @@ class RuntimeActionNet:
 
         self.action_mask[list(legal_action_ids)] = 0.0
 
-        print(
-            "Legal actions:",
-            list(legal_action_ids),
-        )
-
         # -----------------------------------------------------
         # Network
         # -----------------------------------------------------
@@ -196,12 +185,6 @@ class RuntimeActionNet:
         self.model.to(self.device)
 
         self.model.eval()
-
-        print(f"Loaded checkpoint: {checkpoint_path}")
-
-        print(f"Inference device: {self.device}")
-
-        print(f"Gym action count: {action_space.n}")
 
     # =========================================================
     # Load checkpoint
@@ -439,38 +422,6 @@ class RuntimeActionNet:
 
         action = int(action_logits.argmax(dim=-1).item())
 
-        # ============================================================
-        # DEBUG: Inspect model predictions
-        # ============================================================
-
-        if not hasattr(self, "_debug_steps"):
-            self._debug_steps = 0
-
-        if self._debug_steps < 10:
-            print("\n----------------------------------------")
-            print("MODEL PREDICTION DEBUG")
-            print("----------------------------------------")
-
-            print("Previous actions:", previous_actions)
-
-            print("\nLegal action logits:")
-
-            legal_ids = torch.where(torch.isfinite(self.action_mask))[0]
-
-            for action_id in legal_ids.tolist():
-                score = logits[
-                    0,
-                    -1,
-                    action_id,
-                ].item()
-
-                print(f"{action_id:2d} {ALE_ACTION_NAMES[action_id]:15s} {score:.4f}")
-
-            print("\nSelected action:", action)
-            print("----------------------------------------")
-
-            self._debug_steps += 1
-
         return action
 
 
@@ -540,12 +491,7 @@ class GymManager:
                 video_folder=str(video_path),
                 episode_trigger=episode_trigger,
                 name_prefix="action-classifier",
-                disable_logger=False,
-            )
-
-            print(
-                "Video directory:",
-                video_path.resolve(),
+                disable_logger=True,
             )
 
         else:
@@ -563,11 +509,6 @@ class GymManager:
             int(getattr(a, "value", a))
             for a in self.env.unwrapped.ale.getMinimalActionSet()
         ]
-
-        print(
-            "Environment actions:",
-            self.env.unwrapped.get_action_meanings(),
-        )
 
         # =====================================================
         # Preprocessor
@@ -629,11 +570,6 @@ class GymManager:
 
         self.lives = info.get("lives")
         self.fire_pending = self.auto_fire
-
-        print(
-            "Starting lives:",
-            self.lives,
-        )
 
         # =====================================================
         # NEW: Reset previous-action history
@@ -784,7 +720,6 @@ class GymManager:
 def run_episode(
     manager,
     max_steps: int,
-    log_first_steps: int = 0,
 ) -> dict:
     """
     Play one episode and return its raw statistics.
@@ -823,17 +758,6 @@ def run_episode(
             forced_fires += 1
         else:
             action_counts[action] += 1
-
-        # -----------------------------------------------------
-        # Log first actions
-        # -----------------------------------------------------
-
-        if step_count < log_first_steps:
-            print_step(
-                step_count,
-                action,
-                float(reward),
-            )
 
         # -----------------------------------------------------
         # Track statistics
@@ -892,41 +816,16 @@ def evaluate_policy(
     # =========================================================
 
     try:
-        for episode in range(num_episodes):
-            print_header(f"Episode {episode + 1}/{num_episodes}")
-
-            episodes.append(
-                run_episode(
-                    manager,
-                    max_steps,
-                    log_first_steps=(30 if episode == 0 else 0),
-                )
-            )
+        for _ in range(num_episodes):
+            episodes.append(run_episode(manager, max_steps))
 
     finally:
         manager.close()
 
-    # =========================================================
-    # Report results
-    # =========================================================
-
     total_action_counts = Counter()
 
-    for episode, stats in enumerate(
-        episodes,
-        start=1,
-    ):
+    for stats in episodes:
         total_action_counts.update(stats["action_counts"])
-
-        print_episode_report(
-            episode,
-            stats["steps"],
-            stats["reward"],
-            stats["action_counts"],
-            stats["final_info"],
-            stats["hit_max_steps"],
-            max_steps,
-        )
 
     # ---------------------------------------------------------
     # Reward summary
@@ -937,12 +836,11 @@ def evaluate_policy(
     print_summary_report(
         rewards,
         total_action_counts,
+        mean_steps=sum(stats["steps"] for stats in episodes) / len(episodes),
+        forced_fires=sum(stats["forced_fires"] for stats in episodes),
+        capped=sum(stats["hit_max_steps"] for stats in episodes),
+        max_steps=max_steps,
     )
-
-    forced = sum(stats["forced_fires"] for stats in episodes)
-
-    if forced:
-        print(f"Auto-FIRE presses (not counted above): {forced}")
 
     # ---------------------------------------------------------
     # Optional network report
