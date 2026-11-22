@@ -1,60 +1,68 @@
-# Paths
+# ---------------------------------------------------------------- Paths
 raw_data_path: './data/raw/'
 meta_data_path: './data/raw/meta_data.csv'
 processed_data_path: './data/processed/'
-ckpt_path: 'tb_logs/multi_game/vjepa_world_model/version_1/checkpoints/epoch=39-step=99120.ckpt'
-action_classifier_checkpoint_dir: 'checkpoints/action_classifier'
-action_classifier_checkpoint: '/home/cody/Documents/IHL/eye-world/checkpoints/action_classifier/space_invaders-action-history-jepa-best.ckpt'
+log_dir: 'tb_logs'
+video_dir: 'video'
 
-# Gym evaluation (env id follows games[0]; channels follow stack_length/grey_scale)
-gym_eval_episodes: 10
-gym_max_steps: 10000
-gym_record_video: true
-# Pytorch
-epochs: 35
-# Game data
-games: ['space_invaders']
+# Pretrained JEPA encoder: the .ckpt written by jepa_training_multi_game.
+# Used by encoder_check, the action classifier and the rollout world model.
+jepa_checkpoint: 'tb_logs/multi_game/vjepa_world_model/version_0/checkpoints/CHANGE_ME.ckpt'
+# The classifier saves into its run folder under tb_logs; the gym eval loads this file.
+action_classifier_checkpoint: 'tb_logs/breakout/action_jepa_classifier/version_2/checkpoints/breakout-action-jepa-best.ckpt'
+action_classifier_cnn_checkpoint: 'checkpoints/action_classifier/ms_pacman-action-classifier-best-curent-test-v1.ckpt' # CNN gym recording
+
+# ----------------------------------------------------------------- Data
+games: ['freeway']
 num_actions: 18 # full ALE action space, shared across all games
-# Dataset parameters
+train_sub: ['R', 'J']
+val_sub: ['J'] # held out of train for the action classifier (picks the best checkpoint)
+test_sub: ['K']
 batch_size: 32
-num_workers: 3
-shuffle: False
+num_workers: 4 # measured loader throughput: 4 workers ~15 batches/s vs ~5 with 12 (12 train shards / 4 = 3 each)
+shuffle: True # shuffle training samples (buffered; val/test keep their order)
+shuffle_buffer: 5000 # samples held in the shuffle buffer, per loader worker
 
-# Data pre-processing
+# Frames
 original_size: [210, 160]
 size_x: 84
 size_y: 84
-val_needed : True
-train_sub: ['R']
-test_sub: ['K']
-val_sub: ['J']
-grey_scale: False
-# Keep 4 for pretraining. The action-conditioned world model builds its own
-# stack_length = context_frames + ac_num_steps (see ac_config in main.py).
-stack_length: 4 # total frames per sample (context + target)
-context_frames: &context_frames 4 # number of frames for student (context); remaining go to teacher
+grey_scale: True # grayscale frames (1 channel each) everywhere: data, JEPA, classifier, gym
+stack_length: 4 # frames per sample. Keep 4 for pretraining; the rollout world model builds its own
+context_frames: &context_frames 4 # frames per JEPA window
+
+# Gaze preprocessing
 sigma: 5
 eye_density: True
 use_fixations: True
 maxdist: 25
 sampling_rate: 1000
 
-#vjepa
-patchx: 21
-patchy: 21
-use_masking: True
-tubelet_size: *context_frames # number of frames per tubelet
-
-# Data writer parameters
 data_writer:
   shard_write: False
   shard_maxcount: 6250
   data_write_freq: 3
 
-#rollout
-rollout_steps: 12
+# ----------------------------------------------------------------- JEPA
+patchx: 21
+patchy: 21
+tubelet_size: *context_frames # frames per tubelet
+epochs: 20 # shared by every training block
 
-# Action-conditioned world model (RolloutActionJEPA + ACPredictor)
+# ------------------------------------------------- Action classifier
+freeze_encoder: true
+learning_rate: 1e-4
+encoder_lr: 1e-5 # only used when freeze_encoder is false
+grad_clip: 1.0
+class_weight_min_count: 100 # a class with fewer samples is weighted as if it had this many
+class_weight_max_ratio: null # null = pure inverse frequency; a number caps the largest weight at that multiple of the smallest
+
+# ------------------------------------------------- Conv JEPA
+conv_jepa_dim: 512 # latent size of the CNN encoder
+conv_jepa_frames: 2 # frames fed to the encoder (also the classifier's and gym's stack)
+conv_jepa_horizon: 2 # next frames whose latent is predicted (= number of actions conditioned on)
+
+# -------------------------------------- Rollout world model (optional)
 ac_num_steps: 8 # future steps per sample; also the predictor's max sequence length
 ac_auto_steps: 2 # steps of the auto-regressive rollout loss
 ac_val_horizon: 8 # rollout length used for validation (<= ac_num_steps)
@@ -63,47 +71,9 @@ ac_depth: 6
 ac_heads: 8
 ac_lr: 1e-4
 
-use_gaze_for_predictor: false
-use_gaze_for_loss: false
-gaze_topk: 4
-gaze_sigma: 8.0
-patch_size: 16
-gaze_is_normalized: True
-
-#action pipeline
-score_delta_skip_terminal_rollouts: False
-
-death_penalty: 100.0
-
-policy_lr: 5e-5
-policy_depth: 4
-policy_heads: 12
-policy_mlp_dim: 3072
-policy_dropout: 0.0
-
-policy_loss_weight: 1.0
-policy_entropy_weight: 0.01
-policy_random_fraction: 0.25
-policy_baseline_momentum: 0.99
-policy_normalize_advantage: True
-num_tubelets: 16
-cycle_steps: 12
-score_delta_num_envs: 16
-score_delta_updates: 1_000_000
-score_delta_lr: 1e-4
-score_delta_depth: 6
-score_delta_log_every: 10
-score_delta_save_every: 5000
-score_delta_precision: 'bf16'
-
-planner_horizon: 8
-planner_num_candidates: 512
-planner_cem_iterations: 4
-planner_elite_fraction: 0.1
-planner_eval_batch_size: 128
-planner_momentum: 0.25
-planner_min_prob: 0.01
-planner_temperature: 1.0
-score_delta_eval_checkpoint: 'tb_logs/ms_pacman/vjepa_rollout_world_model/version_2/checkpoints/epoch=49-step=164350.ckpt'
-
-cem_eval_episodes: 5
+# ------------------------------------------------------- Gym evaluation
+gym_eval_episodes: 10
+gym_max_steps: 10000
+gym_record_video: true
+gym_repeat_action_probability: 0.25 # sticky actions: chance a step repeats the last action (gym v5 default)
+gym_auto_fire: true # press FIRE at episode start and after each life lost (Breakout needs it to launch the ball)

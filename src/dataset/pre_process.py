@@ -87,61 +87,6 @@ class Stack:
         return stacked, gaze_out
 
 
-'''
-class StackWithLabels:
-    """
-    Stacks images, gaze, and actions in temporal order. Keeps everything aligned with stack_len frames.
-    """
-
-    def __init__(self, config):
-        self.stack_len = config["stack_length"]
-        self.config = config
-        self.img_stack = deque(maxlen=self.stack_len)
-        self.gaze_stack = deque(maxlen=self.stack_len)
-        self.action_stack = deque(maxlen=self.stack_len)
-
-    def reset(self):
-        self.img_stack.clear()
-        self.gaze_stack.clear()
-        self.action_stack.clear()
-
-    def __call__(self, sample):
-        img, eye_gaze, action = sample
-
-        if len(self.img_stack) < self.stack_len:
-            while len(self.img_stack) < self.stack_len:
-                # Append current sample
-                self.img_stack.append(img)
-                self.gaze_stack.append(eye_gaze)
-                self.action_stack.append(action)
-        else:
-            self.img_stack.append(img)
-            self.gaze_stack.appendleft(eye_gaze)
-            self.action_stack.appendleft(action)
-
-        # Stack images along channel dimension: (C, H, W) -> (stack_len*C, H, W)
-        stacked_img = torch.cat(list(self.img_stack), dim=0)
-
-        # Stack actions as tensor (stack_len,)
-        stacked_action = torch.tensor(list(self.action_stack), dtype=torch.long)
-
-        # Stack gaze
-        if self.config.get("eye_density", False):
-            # For density maps, generate one per frame and stack channels
-            gaze_maps = [
-                eye_gaze_to_density_image(img.shape, gaze, self.config)
-                for gaze in self.gaze_stack
-            ]
-            stacked_gaze = torch.cat(gaze_maps, dim=0)
-        else:
-            # For raw gaze points: (stack_len, 2)
-            stacked_gaze = torch.tensor(self.gaze_stack, dtype=torch.float32)
-
-        return stacked_img, stacked_gaze, stacked_action
-
-'''
-
-
 class StackWithLabels:
     """
     Stacks images, gaze, and actions in temporal order.
@@ -160,11 +105,15 @@ class StackWithLabels:
         self.img_stack = deque(maxlen=self.stack_len)
         self.gaze_stack = deque(maxlen=self.stack_len)
         self.action_stack = deque(maxlen=self.stack_len)
+        # Per-frame gaze density maps, cached so each frame's (expensive)
+        # fixation detection + density map runs once, not stack_len times.
+        self.density_stack = deque(maxlen=self.stack_len)
 
     def reset(self):
         self.img_stack.clear()
         self.gaze_stack.clear()
         self.action_stack.clear()
+        self.density_stack.clear()
 
     def __call__(self, sample):
         img, eye_gaze, action = sample
@@ -182,11 +131,17 @@ class StackWithLabels:
         # [action_0, action_0, action_0, action_0]
         # -----------------------------------------------------
 
+        use_density = self.config.get("eye_density", False)
+        density = None
+        if use_density:
+            density = eye_gaze_to_density_image(img.shape, eye_gaze, self.config)
+
         if len(self.img_stack) < self.stack_len:
             while len(self.img_stack) < self.stack_len:
                 self.img_stack.append(img)
                 self.gaze_stack.append(eye_gaze)
                 self.action_stack.append(action)
+                self.density_stack.append(density)
 
         else:
             # IMPORTANT:
@@ -197,6 +152,7 @@ class StackWithLabels:
             self.img_stack.append(img)
             self.gaze_stack.append(eye_gaze)
             self.action_stack.append(action)
+            self.density_stack.append(density)
 
         # -----------------------------------------------------
         # IMAGE STACK
@@ -247,17 +203,8 @@ class StackWithLabels:
         # -----------------------------------------------------
 
         if self.config.get("eye_density", False):
-            gaze_maps = [
-                eye_gaze_to_density_image(
-                    img.shape,
-                    gaze,
-                    self.config,
-                )
-                for gaze in self.gaze_stack
-            ]
-
             stacked_gaze = torch.cat(
-                gaze_maps,
+                list(self.density_stack),
                 dim=0,
             )
 

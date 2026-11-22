@@ -7,12 +7,13 @@ from torch import nn
 
 
 class ActionNet(nn.Module):
-    def __init__(self, num_actions: int):
+    def __init__(self, num_actions: int, in_channels: int = 4):
+        """in_channels: stacked frames x channels per frame (4 for 4 grayscale frames)."""
         super().__init__()
 
         self.conv_layers = nn.Sequential(
             nn.Conv2d(
-                in_channels=12,
+                in_channels=in_channels,
                 out_channels=32,
                 kernel_size=8,
                 stride=4,
@@ -40,7 +41,7 @@ class ActionNet(nn.Module):
 
         self.fc_layers = nn.Sequential(
             nn.Linear(3136, 512),
-            nn.LeakyReLU(),
+            nn.ReLU(),
             nn.Linear(
                 512,
                 self.num_predictions * self.num_actions,
@@ -52,7 +53,7 @@ class ActionNet(nn.Module):
         x = torch.flatten(x, start_dim=1)
         x = self.fc_layers(x)
 
-        # [batch, 36] -> [batch, 4, 9]
+        # [batch, num_actions] -> [batch, 1, num_actions]
         x = x.reshape(
             x.shape[0],
             self.num_predictions,
